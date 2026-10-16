@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/ui/shm-display.c b/ui/shm-display.c
 new file mode 100644
 index 0000000..e984c1a

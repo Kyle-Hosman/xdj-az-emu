@@ -1,46 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Derived from cdj3k-emu (MIT OR Apache-2.0); see ATTRIBUTION.md.
 [workspace]
 resolver = "2"
-members = [
-  "crates/cdj3k-emu-panel",
-  "crates/cdj3k-emu-streams",
-  "crates/cdj3k-emu-platform",
-  "crates/cdj3k-emu-ui",
-  "crates/cdj3k-emu-runtime",
-  "app/cdj3k-emu",
-  "crates/cdj3k-emu-storage",
-  "crates/cdj3k-emu-firmware",
-  "crates/cdj3k-emu-update",
-]
-# winit/src is a patched dependency and not a workspace member; see
-# [patch.crates-io].
-exclude = ["winit/src"]
-
-# Dependencies are optimised in dev builds; the workspace crates stay at
-# opt-level 0 so they remain debuggable. Unoptimised, the crypto and
-# compression crates dominate a firmware install: the CDJ-3000X .UPD decrypt
-# takes 364 s against 16.8 s, and the rootfs gzip 65.7 s against 10.9 s.
-[profile.dev.package."*"]
-opt-level = 2
-
-# The glob covers dependencies only; the .UPD decrypt and the LUKS work are in
-# this crate, and unoptimised they add minutes to a debug provision.
-[profile.dev.package.cdj3k-emu-firmware]
-opt-level = 2
+members = ["az-preview"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.1.0"
 edition = "2021"
-rust-version = "1.95"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/nsaintot/cdj3k-emu"
-# The workspace crates are internal and are not published to crates.io.
+rust-version = "1.88"
+license = "GPL-3.0-only"
 publish = false
-
-# The patched winit adds one feature: it applies a Wayland aspect ratio while
-# it handles a configure event (`winit::platform::wayland::set_surface_aspect_ratio`).
-# xdg-shell has no aspect hint, and applying the ratio any later draws one
-# frame at the wrong size first. winit/fetch.sh builds winit/src from the
-# crates.io release and winit/patches/; run it before any cargo command.
-[patch.crates-io]
-winit = { path = "winit/src" }
-

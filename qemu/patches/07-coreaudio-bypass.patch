@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/audio/coreaudio.m b/audio/coreaudio.m
 index e4ec1df..ca4393b 100644
 --- a/audio/coreaudio.m

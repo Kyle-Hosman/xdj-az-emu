@@ -1,0 +1,195 @@
+# Where every control sits on the XDJ-AZ's top panel.
+#
+# Measured on the manufacturer's top-panel line drawing at 2742 x 1518 px, the
+# panel's reference size (see ASPECT in src/panel.rs): circles by a least-squares
+# fit to their outer edge, rectangles by their outer border, a few by hand
+# (deck select, IN/CUE and OUT, the jog, the browse cluster's four curved keys,
+# the faders), and by hand again where the fit took printed shading or a
+# neighbor's line for an edge (BEAT JUMP, BEAT SYNC, LOAD, CH SELECT 1 and CF.A,
+# MIXER SETTINGS, the X-PAD strip, the tempo frame, the USB slots).
+# x, y = center; w, h = outer size; all in those pixels. Faders: the track row's
+# h is the cap's travel (the cap's center moves between its ends).
+#
+# Not measured: the screen's housing (panel.tower, top.bezel, top.lcd) and the
+# screen-tab row. The tabs sit near the housing's top and the bezel is narrow, so
+# the live screen is as large as the housing allows; the deck's own bezel is wider.
+#
+# The right deck repeats the left one shifted right by deck_r_dx: the XDJ-AZ's
+# decks are copies, not mirror images. build.rs turns this file into
+# constants (src/layout.rs).
+#
+# The optional last field describes the control's look, measured on the same
+# drawing (lengths in its pixels, angles in degrees clockwise from 3 o'clock):
+#   rings=r,...        concentric outlines, center out (radial profile)
+#   fill=0-r           a filled disc at the center
+#   grips=n@r          a knurled band of n grips (angular FFT of the band)
+#   scallop=n@r0-r1    a scalloped skirt of n lobes
+#   dots=r:a,...       a knob's printed scale dots
+#   arc=r,w:a-b,...    a knob's printed range arc
+#   corner=r           a rectangle's corner radius (median of its family)
+#   segs=n:len         a level meter's n segments, each len long (segment boxes
+#                      found as enclosed faces)
+#   path=x,y ...       a traced outline, relative to the center (contour of the
+#                      enclosed face, simplified to 0.7 px)
+#   hub, ovals, smalls   the jog's center band and the grip ring around the platter
+#
+# name	shape	x	y	w	h	look (optional; see below)
+deck_r_dx	offset	1764.5	0	0	0
+deck.in_cue	circle	96.0	487.0	59.0	59.0	fill=0.0-18.5;rings=20.5,27.0,29.0
+deck.out	circle	172.0	487.0	59.0	59.0	fill=0.0-18.5;rings=20.5,27.0,29.0
+deck.reloop	circle	263.2	487.1	42.4	42.4	rings=4.5,11.0,17.0,21.0
+deck.select_l	rect	448.8	488.0	77.5	46.0	corner=1.3
+deck.select_r	rect	532.5	488.0	77.0	46.0	corner=1.3
+deck.call_prev	circle	679.7	487.1	29.2	29.2	rings=11.0,14.5
+deck.call_next	circle	742.5	487.1	29.1	29.1	rings=11.0,14.5
+deck.delete	circle	812.7	487.2	41.7	41.7	rings=11.0,16.0,20.5
+deck.memory	circle	872.5	487.2	29.3	29.3	rings=11.0,14.5
+deck.loop4	circle	95.8	567.9	42.4	42.4	rings=17.5,21.0
+deck.loop8	circle	172.1	567.9	42.3	42.3	rings=17.5,21.0
+deck.jump_prev	rect	96.0	647.0	47.0	26.2	corner=2.6
+deck.jump_next	rect	172.0	647.0	47.0	26.2	corner=2.6
+deck.slip	circle	95.8	765.2	29.1	29.1	fill=0.0-5.0;rings=11.0,14.5
+deck.slip_rev	rect	97.0	870.0	64.5	38.6	corner=4.7
+deck.jog_feel	circle	761.8	609.8	39.4	39.4	rings=19.0;grips=12@17.0;dots=25.5:5.5,29.5,53.5,126.0,150.1,174.6,198.6,222.6,246.6,270.4,293.8,318.1,341.6
+deck.vinyl_speed	circle	872.5	567.9	29.2	29.2	rings=4.5,11.0,14.5
+deck.jog_mode	rect	872.8	648.5	67.5	43.5	corner=6.4
+deck.beat_sync	rect	848.5	726.0	34.0	38.3	corner=0.0
+deck.master	rect	897.0	726.0	32.7	38.3	corner=0.0
+deck.key_sync	rect	872.5	783.0	59.2	22.3	corner=3.4
+deck.tempo_range	circle	872.5	976.0	29.1	29.1	rings=11.0,14.5
+deck.shift	rect	134.0	1022.8	66.1	43.5	corner=6.8
+deck.track_prev	circle	105.5	1108.2	44.0	44.0
+deck.track_next	circle	162.2	1108.3	43.7	43.7
+deck.search_rev	circle	105.3	1177.3	44.6	44.6
+deck.search_fwd	circle	162.6	1177.4	44.4	44.4
+deck.cue	circle	133.9	1288.6	109.0	109.0	fill=0.0-4.5;rings=40.0,43.5,47.0,54.5
+deck.play	circle	133.9	1426.0	108.9	108.9	rings=40.0,43.5,47.0,54.5
+deck.padmode1	rect	346.0	1244.5	82.6	21.7	corner=2.8
+deck.padmode2	rect	442.0	1244.5	82.6	21.7	corner=2.8
+deck.padmode3	rect	537.5	1244.5	83.2	21.7	corner=2.8
+deck.padmode4	rect	633.0	1244.5	82.6	21.7	corner=2.8
+deck.pad1	rect	345.0	1330.5	80.5	83.0	corner=4.5
+deck.pad2	rect	442.0	1330.5	82.7	83.0	corner=4.5
+deck.pad3	rect	537.5	1330.5	83.3	83.0	corner=4.5
+deck.pad4	rect	633.0	1330.5	82.7	83.0	corner=4.5
+deck.pad5	rect	345.0	1426.0	80.5	82.0	corner=4.5
+deck.pad6	rect	442.0	1426.0	82.7	82.0	corner=4.5
+deck.pad7	rect	537.5	1426.0	83.3	82.0	corner=4.5
+deck.pad8	rect	633.0	1426.0	82.7	82.0	corner=4.5
+deck.tempo_reset	circle	770.5	1279.4	41.3	41.3	rings=20.5
+deck.master_tempo	circle	872.5	1043.5	29.4	29.4	rings=4.5,11.0,14.5
+deck.jog	circle	490.0	870.0	662.0	662.0	hub=75.0-105.0;rings=249.0,256.0,306.0,331.0;ovals=24@283.0:50x37;smalls=11:6.0@268.0,7.5@282.0,9.0@296.0
+mixer.settings_btn	rect	1004.0	666.0	47.0	27.0	corner=3.4
+mixer.trim.3	circle	1138.7	642.9	42.5	42.5	rings=13.0,16.5,21.0;dots=25.0:29.6,59.9,120.4,150.2,180.5,210.4,240.0,270.1,299.6,329.4,359.4
+mixer.trim.1	circle	1267.3	642.8	42.5	42.5	rings=13.0,16.5,21.0;dots=25.0:30.0,59.8,120.1,150.2,180.4,210.2,240.0,269.8,300.0,329.6,359.6
+mixer.trim.2	circle	1395.9	642.9	42.5	42.5	rings=13.0,16.5,21.0;dots=25.0:29.5,60.0,120.5,150.4,180.4,210.1,240.0,270.0,299.6,329.5,359.4
+mixer.trim.4	circle	1524.5	642.9	42.4	42.4	rings=13.0,16.5,21.0;dots=25.0:29.9,60.0,120.2,150.2,180.5,210.5,240.2,269.6,299.6,329.2,359.4
+mixer.hi.3	circle	1138.6	731.1	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:30.1,60.0,119.8,150.1,179.6,209.8,240.0,270.0,300.5,330.0,360.2
+mixer.hi.1	circle	1267.2	731.1	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:29.6,60.1,119.9,149.5,179.6,210.1,239.8,270.1,300.4,330.2,360.0
+mixer.hi.2	circle	1395.9	731.1	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:30.4,60.1,120.0,150.5,180.0,209.6,239.5,269.9,300.2,329.8,360.2
+mixer.hi.4	circle	1524.4	731.2	48.3	48.3	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:29.6,60.0,120.0,150.0,179.9,210.1,239.6,270.0,300.1,330.1,360.0
+mixer.mid.3	circle	1138.6	822.4	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:30.0,59.8,119.9,150.1,180.0,209.9,240.0,270.0,300.4,329.8,360.1
+mixer.mid.1	circle	1267.2	822.4	48.3	48.3	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:29.4,59.9,120.1,149.9,180.0,210.4,239.9,270.1,300.1,329.9,359.8
+mixer.mid.2	circle	1395.9	822.5	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:29.8,60.0,120.2,150.5,180.2,209.9,239.9,269.8,299.9,329.8,359.8
+mixer.mid.4	circle	1524.4	822.5	48.3	48.3	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:29.6,59.9,120.2,150.2,180.2,210.4,239.9,270.0,299.9,329.8,359.8
+mixer.low.3	circle	1138.7	913.5	48.2	48.2	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:30.4,60.2,119.9,150.0,179.8,209.5,240.0,269.8,299.9,330.1,360.1
+mixer.low.1	circle	1267.2	913.5	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:29.8,60.1,119.9,149.5,179.9,209.9,240.0,270.1,300.1,330.5,360.2
+mixer.low.2	circle	1395.9	913.5	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:30.1,60.2,120.0,150.1,179.9,209.5,239.8,269.8,300.0,330.2,360.1
+mixer.low.4	circle	1524.4	913.5	48.3	48.3	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:30.0,60.1,120.0,149.6,180.0,209.9,240.0,270.0,300.0,330.4,360.0
+mixer.color.3	circle	1138.5	1029.6	54.0	54.0	rings=20.0;scallop=16@20.0-27.0;arc=33.5,4.0:123.8-266.5,273.5-416.8
+mixer.color.1	circle	1267.3	1029.7	54.0	54.0	rings=20.0;scallop=16@20.0-27.0;arc=33.5,4.0:123.8-266.5,273.5-416.8
+mixer.color.2	circle	1395.8	1029.8	54.0	54.0	rings=20.0;scallop=16@20.0-27.0;arc=33.5,4.0:123.8-266.5,273.5-416.8
+mixer.color.4	circle	1524.4	1029.6	54.0	54.0	rings=20.0;scallop=16@20.0-27.0;arc=33.5,4.0:123.8-266.5,273.5-416.8
+mixer.cue.3	rect	1138.0	1103.5	60.6	29.9	corner=4.0
+mixer.cue.1	rect	1268.0	1103.5	60.6	29.9	corner=4.0
+mixer.cue.2	rect	1396.0	1103.5	62.2	29.9	corner=4.0
+mixer.cue.4	rect	1524.5	1103.5	61.4	29.9	corner=4.0
+mixer.scfx.space	rect	975.0	820.0	46.2	26.1	corner=2.6
+mixer.scfx.dubecho	rect	1033.0	820.0	46.2	26.1	corner=2.6
+mixer.scfx.crush	rect	975.0	883.0	46.2	26.1	corner=2.6
+mixer.scfx.sweep	rect	1033.0	883.0	46.2	26.1	corner=2.6
+mixer.scfx.noise	rect	975.0	943.5	46.2	27.7	corner=2.6
+mixer.scfx.filter	rect	1033.0	943.5	46.2	27.7	corner=2.6
+mixer.scfx.param	circle	1004.1	1028.7	48.4	48.4	rings=20.0,24.0;grips=12@17.0;dots=28.0:29.9,60.0,120.0,149.6,180.0,210.1,240.1,270.0,299.9,330.0,360.0
+mixer.link_cue	rect	1004.0	1132.0	46.8	26.1	corner=2.6
+mixer.hp_mix	circle	1004.1	1207.9	48.5	48.5	rings=20.0,24.0;grips=12@17.0;dots=28.5:29.4,59.8,120.1,150.5,180.5,210.4,240.2,270.0,299.9,329.8,359.5
+mixer.hp_level	circle	1004.1	1312.5	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:29.8,60.0,120.1,150.1,180.0,210.5,240.0,270.1,299.9,330.0,359.9
+fx.xpad	rect	1702.0	666.0	198.0	35.0	corner=1.3
+fx.beat_prev	rect	1651.0	738.0	52.3	24.5	corner=3.0
+fx.beat_next	rect	1753.5	738.0	51.7	24.5	corner=3.0
+fx.auto_tap	circle	1644.3	797.6	28.6	28.6	rings=7.5,11.0,14.0
+fx.tap	circle	1702.3	789.8	49.2	49.2	fill=0.0-5.0;rings=6.5,8.5,10.5,12.5,14.5,17.5,20.0,24.5
+fx.quantize	circle	1760.3	797.6	28.5	28.5	fill=0.0-4.5;rings=7.5,11.0,14.0
+fx.freq_low	rect	1644.0	864.5	45.0	29.9	corner=3.4
+fx.freq_mid	rect	1702.0	864.5	45.0	29.9	corner=3.4
+fx.freq_hi	rect	1761.0	864.5	44.4	29.9	corner=3.4
+fx.select	circle	1702.1	970.4	48.9	48.9	rings=20.5,24.0;dots=26.0:10.6,33.5,55.5,123.4,145.9,168.9,191.8,214.0,236.9,259.0,281.5,304.4,326.4,348.4
+fx.ch.3	rect	1630.5	1076.0	35.1	22.2	corner=3.2
+fx.ch.1	rect	1676.5	1076.0	32.0	22.2	corner=3.2
+fx.ch.2	rect	1725.0	1076.0	32.3	22.2	corner=3.2
+fx.ch.4	rect	1774.0	1076.0	34.5	22.2	corner=3.2
+fx.ch.mic	rect	1630.5	1131.0	35.1	22.8	corner=3.2
+fx.ch.cfa	rect	1676.5	1131.0	32.0	22.8	corner=3.2
+fx.ch.cfb	rect	1725.0	1131.0	32.3	22.8	corner=3.2
+fx.ch.mst	rect	1774.0	1131.0	34.5	22.8	corner=3.2
+fx.time	circle	1702.3	1207.9	48.4	48.4	rings=15.0,20.0,24.0;grips=12@19.5;dots=37.0:262.8,266.8,271.8,276.5,281.5
+fx.level_depth	circle	1702.4	1312.5	48.3	48.3	rings=20.0,24.0;grips=12@17.5;dots=28.0:29.6,59.8,120.0,150.1,180.1,210.1,240.0,270.1,300.0,329.9,359.9
+fx.on	circle	1702.3	1426.1	72.2	72.2	fill=0.0-20.5;rings=23.0,27.5,32.0,36.0
+top.source	rect	1051.0	40.0	90.0	21.7	corner=2.6
+top.browse	rect	1159.0	40.0	90.0	21.7	corner=2.6
+top.tag_list	rect	1267.0	40.0	90.0	21.7	corner=2.6
+top.playlist	rect	1374.0	40.0	90.6	21.7	corner=2.6
+top.search	rect	1482.0	40.0	90.6	21.7	corner=2.6
+top.menu	rect	1590.0	40.0	90.6	21.7	corner=2.6
+top.back	rect	1729.5	184.5	43.0	59.0	path=21.5,-28.5 19.5,-29.5 4.5,-28.5 3.5,-27.5 -8.5,-25.5 -20.5,-20.5 -21.5,-18.5 -21.5,28.5 -18.5,29.5 -8.5,22.5 4.5,17.5 21.5,14.5
+top.tag_track	rect	1778.5	184.5	43.0	59.0	path=-21.5,-28.5 -21.5,14.5 -4.5,17.5 11.5,24.5 18.5,29.5 21.5,28.5 21.5,-19.5 14.5,-23.5 8.5,-24.5 4.5,-26.5 0.5,-26.5 -5.5,-28.5 -11.5,-28.5 -12.5,-29.5 -19.5,-29.5
+top.track_filter	rect	1729.5	350.5	43.0	61.0	path=-21.5,-29.5 -21.5,19.5 -20.5,21.5 -11.5,25.5 -8.5,25.5 0.5,28.5 4.5,28.5 5.5,29.5 11.5,29.5 12.5,30.5 19.5,30.5 21.5,29.5 21.5,-14.5 14.5,-16.5 9.5,-16.5 -3.5,-20.5 -14.5,-26.5 -19.5,-30.5
+top.shortcut	rect	1778.5	350.5	43.0	61.0	path=21.5,-29.5 19.5,-30.5 14.5,-26.5 3.5,-20.5 -5.5,-17.5 -15.5,-16.5 -21.5,-14.5 -21.5,29.5 -19.5,30.5 -14.5,30.5 -13.5,29.5 -0.5,28.5 16.5,23.5 21.5,20.5
+top.browse_knob	circle	1754.0	266.2	79.8	79.8
+top.load1	rect	1731.5	459.5	38.0	29.2	corner=0.0
+top.load2	rect	1777.0	459.5	37.0	29.2	corner=0.0
+top.load3	rect	1731.5	517.5	38.0	29.2	corner=0.0
+top.load4	rect	1777.0	517.5	37.0	29.2	corner=0.0
+mic.on1	circle	263.2	271.9	34.4	34.4	rings=4.5,7.5,9.5,11.5,13.5,17.0
+mic.on2	circle	263.2	357.1	34.4	34.4	rings=4.5,7.5,9.5,11.5,13.5,17.0
+mic.talk_over	circle	346.4	314.5	27.6	27.6	rings=4.5,11.0,13.5
+mic.level1	circle	455.5	272.1	42.4	42.4	rings=13.0,16.5,21.0;dots=24.5:30.0,60.2,120.8,150.5,180.5,209.9,239.4,269.5,299.2,329.2,359.6
+mic.low1	circle	555.2	271.8	48.5	48.5	rings=20.0,24.0;grips=12@17.5;dots=28.0:29.8,60.1,119.5,149.6,179.9,210.0,240.2,270.2,300.2,330.4,360.1
+mic.mid1	circle	648.9	271.8	48.5	48.5	rings=20.0,24.0;grips=12@17.5;dots=28.0:30.2,60.4,119.8,149.9,180.0,210.0,239.8,270.0,300.1,330.0,360.0
+mic.hi1	circle	742.5	271.9	48.4	48.4	rings=20.0,24.0;grips=12@17.5;dots=28.0:29.9,60.2,119.8,150.1,180.1,209.9,240.0,270.0,300.0,330.0,359.8
+mic.level2	circle	455.4	357.1	42.4	42.4	rings=13.0,16.5,21.0;dots=24.5:30.2,60.5,120.5,150.2,179.9,209.9,239.4,269.6,299.6,329.6,360.0
+mic.low2	circle	555.1	357.1	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:29.4,59.9,119.4,149.6,180.0,210.2,240.4,270.5,300.6,330.4,360.0
+mic.mid2	circle	648.9	357.0	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:30.5,60.4,119.8,149.8,179.8,209.6,239.5,270.0,300.4,330.0,360.4
+mic.hi2	circle	742.5	357.1	48.3	48.3	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:30.0,60.2,119.8,150.1,179.9,209.9,239.9,270.0,300.0,330.1,360.1
+global.quantize	circle	872.5	314.5	27.7	27.7	fill=0.0-4.5;rings=11.0,13.5
+master.level	circle	2004.5	271.2	42.7	42.7	rings=13.0,16.5,21.0;dots=24.5:31.8,61.4,119.5,148.9,178.4,208.4,238.6,269.4,300.5,332.6,361.8
+master.cue	rect	2004.5	357.0	63.5	28.8	corner=2.6
+master.low	circle	2094.0	357.0	48.5	48.5	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.5:30.0,60.1,119.8,149.8,179.9,210.0,240.0,270.1,300.2,330.1,360.2
+master.mid	circle	2183.8	357.0	48.4	48.4	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:30.4,60.1,119.9,150.2,179.9,209.6,239.6,269.9,300.2,329.9,360.2
+master.hi	circle	2273.4	357.1	48.5	48.5	rings=15.0,20.0,24.0;grips=12@17.5;dots=28.0:29.6,59.8,119.9,149.9,179.9,210.2,239.9,270.1,300.8,330.1,359.9
+master.booth	circle	2377.9	356.9	42.9	42.9	rings=13.0,16.5,21.0;dots=24.5:31.6,60.2,119.0,148.8,178.6,209.0,239.8,270.4,301.0,331.5,361.2
+usb.stop1	circle	2482.7	357.1	28.1	28.1	rings=11.0,13.5
+usb.stop2	circle	2613.0	357.1	28.0	28.0	rings=11.0,14.0
+panel.body	rect	1372.0	855.5	2676.0	1323.0
+panel.tower	rect	1373.5	288.0	873.0	548.0
+top.bezel	rect	1320.0	300.0	740.0	472.0	corner=0.0
+top.lcd	rect	1320.0	300.0	716.0	447.5
+deck.tempo_track	rect	872.0	1280.0	6.0	310.0
+deck.tempo_cap	rect	872.0	1279.0	53.0	58.0
+deck.tempo_frame	rect	872.5	1279.5	68.0	385.0	corner=9.8
+mixer.fader.3	rect	1138.0	1257.5	6.0	131.0
+mixer.fader.1	rect	1268.0	1257.5	6.0	131.0
+mixer.fader.2	rect	1396.0	1257.5	6.0	131.0
+mixer.fader.4	rect	1524.5	1257.5	6.0	131.0
+mixer.fader_cap	rect	0.0	0.0	62.0	26.0
+mixer.xfader	rect	1339.0	1443.0	148.0	6.0
+mixer.xfader_cap	rect	0.0	0.0	32.0	62.0
+master.meter	rect	2188.5	271.0	273.0	58.0
+mixer.meter.3	rect	1085.5	823.0	5.0	208.0	segs=11:13.5
+mixer.meter.1	rect	1214.0	823.0	5.0	208.0	segs=11:13.5
+mixer.meter.2	rect	1342.5	823.0	5.0	208.0	segs=11:13.5
+mixer.meter.4	rect	1471.0	823.0	5.0	208.0	segs=11:13.5
+master.meter_l	rect	2185.5	254.5	223.0	5.0	segs=11:14.0
+master.meter_r	rect	2185.5	290.5	223.0	5.0	segs=11:14.0
+usb.slot1	rect	2482.5	272.0	58.0	53.0
+usb.slot2	rect	2613.0	272.0	59.0	53.0

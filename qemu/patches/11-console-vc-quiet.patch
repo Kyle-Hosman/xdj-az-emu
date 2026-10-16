@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/ui/console-vc.c b/ui/console-vc.c
 index 6163e21..69941c4 100644
 --- a/ui/console-vc.c

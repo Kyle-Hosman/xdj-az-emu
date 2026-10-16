@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/drivers/gpu/drm/virtio/virtgpu_kms.c b/drivers/gpu/drm/virtio/virtgpu_kms.c
 index 5a3b5aaed..fb7d11506 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_kms.c

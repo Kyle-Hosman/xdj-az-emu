@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: MIT OR Apache-2.0
 # clang-format settings for the whole repository: the Google style with a few
 # overrides.
 BasedOnStyle: Google

@@ -1,156 +1,44 @@
-# Lint and test on every host. cd.yml builds the packages.
-name: CI
+name: ci
 
-# Lint, Quality, Test (Linux), Test (macOS) and Test (Windows) are the checks
-# the "Main" ruleset requires before a merge.
+# The checks that need no deck system: formatting, Clippy and the unit tests of the
+# AZ-EMU app on macOS and Windows, line endings, and that every Python tool compiles.
+# The full suite (tools/az-emu-test.py) boots a pulled system, so it runs on a
+# developer's machine, not here.
+
 on:
+  push:
   pull_request:
-    branches: [main]
-  workflow_dispatch:
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: "0"
-
 jobs:
-  # The code branches on the OS, never on the architecture, so there is one
-  # test job per OS, and one Linux job runs the lint, Windows clippy and MSRV
-  # checks.
-  lint:
-    name: Lint
-    runs-on: ubuntu-24.04
+  app-macos:
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/rust
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
         with:
-          components: rustfmt,clippy
-          targets: x86_64-pc-windows-gnullvm
-      - run: rustup toolchain install 1.95 --profile minimal
-      - run: ./winit/fetch.sh
-      - name: rustfmt
-        run: cargo fmt --all --check
-      # The Windows code is type-checked from Linux: clippy compiles no C for
-      # that target, so no mingw toolchain is needed.
-      - name: clippy (Linux)
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: clippy (Windows)
-        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnullvm -- -D warnings
-      - name: MSRV (1.95)
-        run: cargo +1.95 check --workspace --all-targets --locked
-      - name: actionlint
-        run: |
-          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
-          ./actionlint -color
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
 
-  # Structural quality: `sentrux check` enforces .sentrux/rules.toml, and
-  # `sentrux gate` holds coupling, cycles and god files to
-  # .sentrux/baseline.json.
-  quality:
-    name: Quality
-    runs-on: ubuntu-24.04
-    env:
-      SENTRUX: v0.5.7
+  app-windows:
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      # The binary links GTK for its GUI, even when it runs as a CLI. Its
-      # grammars come from the same release. The release has no grammar for V,
-      # and a missing grammar makes sentrux download the set again on every
-      # run.
-      - name: sentrux
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-3-0t64
-          base="https://github.com/sentrux/sentrux/releases/download/$SENTRUX"
-          bin="$RUNNER_TEMP/bin"
-          mkdir -p "$bin" ~/.sentrux/plugins/vlang/grammars
-          curl -sSfL -o "$bin/sentrux" "$base/sentrux-linux-x86_64"
-          curl -sSfL -o "$RUNNER_TEMP/grammars.tar.gz" "$base/grammars-linux-x86_64.tar.gz"
-          sha256sum -c <<EOF
-          3237f80fe20d54aad4deefa8a143f0d60543bb5d2d6ad891eb42432f155725a6  $bin/sentrux
-          8849f1eb07df3f6d4ea1ed422d8dee4b9b79a250682fa5646675dae466554454  $RUNNER_TEMP/grammars.tar.gz
-          EOF
-          chmod +x "$bin/sentrux"
-          tar xzf "$RUNNER_TEMP/grammars.tar.gz" -C ~/.sentrux/plugins
-          : > ~/.sentrux/plugins/vlang/grammars/linux-x86_64.so
-          echo "$bin" >> "$GITHUB_PATH"
-          "$bin/sentrux" analytics off
-      - name: sentrux check
-        run: sentrux check .
-      - name: sentrux gate
-        run: sentrux gate .
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - run: cargo build
+      - run: cargo test
 
-  test-linux:
-    name: Test (Linux)
-    runs-on: ubuntu-24.04
+  repo:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - name: System libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-              libwayland-dev libxkbcommon-dev libx11-dev libgl1-mesa-dev libegl1-mesa-dev
-      - uses: ./.github/actions/rust
-      - run: ./winit/fetch.sh
-      - run: cargo test --workspace --locked
-      # The LCD streams poll memory that QEMU writes, and a stale read shows
-      # only in an optimised build.
-      - run: cargo test --release --locked -p cdj3k-emu-streams
-
-  test-macos:
-    name: Test (macOS)
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/rust
-        with:
-          components: clippy
-      # cdj3k-emu-runtime links libcdj3k-emu-qemu.dylib on macOS.
-      - uses: ./.github/actions/qemu-macos
-        with:
-          arch: arm64
-      # The test binaries carry no rpath to it; dyld's fallback path finds it.
-      - run: |
-          lib="$PWD/qemu/install-macos-arm64/lib"
-          echo "CDJ3K_EMU_QEMU_LIB_DIR=$lib" >> "$GITHUB_ENV"
-          echo "DYLD_FALLBACK_LIBRARY_PATH=$lib" >> "$GITHUB_ENV"
-      - run: ./winit/fetch.sh
-      - name: clippy (macOS)
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
-
-  test-windows:
-    name: Test (Windows)
-    runs-on: windows-2025
-    defaults:
-      run:
-        shell: bash
-    env:
-      LLVM_MINGW: llvm-mingw-20260922-ucrt-x86_64
-    steps:
-      - uses: actions/checkout@v7
-      # The release links with llvm-mingw (x86_64-pc-windows-gnullvm); the
-      # tests do the same, with the version docker/Dockerfile.windows-qemu pins.
-      - name: llvm-mingw
-        run: |
-          curl -sSfL -o "$RUNNER_TEMP/llvm-mingw.zip" \
-              "https://github.com/mstorsjo/llvm-mingw/releases/download/20260922/${LLVM_MINGW}.zip"
-          unzip -q "$RUNNER_TEMP/llvm-mingw.zip" -d "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/${LLVM_MINGW}/bin" >> "$GITHUB_PATH"
-      - uses: ./.github/actions/rust
-        with:
-          targets: x86_64-pc-windows-gnullvm
-      - run: ./winit/fetch.sh
-      - name: cargo test
-        env:
-          CARGO_BUILD_TARGET: x86_64-pc-windows-gnullvm
-          CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER: x86_64-w64-mingw32-clang
-          CC_x86_64_pc_windows_gnullvm: x86_64-w64-mingw32-clang
-          AR_x86_64_pc_windows_gnullvm: llvm-ar
-        run: cargo test --workspace --locked
+      - uses: actions/checkout@v4
+      - name: Line endings
+        run: python3 tools/check-lf.py
+      - name: Python tools compile
+        run: python3 -m py_compile tools/*.py
+      - name: Python unit tests
+        run: python3 tools/test_azemu.py

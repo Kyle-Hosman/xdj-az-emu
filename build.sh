@@ -1,212 +1,214 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: MIT OR Apache-2.0
-# build.sh
+# SPDX-License-Identifier: GPL-3.0-only
+# Derived from cdj3k-emu (MIT OR Apache-2.0); see ATTRIBUTION.md.
 #
-# Build all guest artifacts (the Linux 6.6 LTS kernel, the out-of-tree modules
-# and the tools), install them into the Pioneer rootfs, apply the patches and
-# repack the initramfs. Run it after changing a module, a patch script or the
-# kernel config.
+# build.sh: build the emulator's boot files.
 #
-# Artifacts (see docker/Dockerfile):
-#   Image              - the 6.6 LTS kernel, with PL011 and virtio built in
-#   subucom_virt.ko    - the virtual sub-CPU device (/dev/subucom_spi1.0)
-#   virtio_snd.ko      - the project's virtio-sound PCM driver
-#   udev_usb1.ko       - Pioneer's media event channels in /proc
-#   dummy_drv.so       - the Xorg dummy video driver (headless mode)
-#   deck_shim.so       - the LD_PRELOAD shim (core/ and per-model code)
-#   subucom_forwarder_aarch64, subucom_live_aarch64, cfgd_aarch64,
-#   pc_link_bridge_aarch64
-#   dropbear_aarch64   - built by dropbear/build.sh
+#   ./build.sh              everything: kernel, modules, tools, and the boot image
+#   ./build.sh --no-image   only our own parts (kernel, modules, shim, tools,
+#                           dropbear); needs nothing from a deck
+#   ./build.sh --image-only only the boot image, reusing build/docker-out/ from an
+#                           earlier build (yours, or copied from another machine:
+#                           those files are all ours, built from this repo)
+#   ./build.sh --clean      also remove the Docker build cache afterwards
 #
-# Outputs:
-#   build/Image
-#   build/initramfs-patched.cpio.gz
+# Inputs:
+#   build/initramfs-work-pulled/initramfs.cpio.gz
+#                                    YOUR deck's system, from tools/az-emu-pull.py.
+#                                    This is the ONLY input that comes from the deck's
+#                                    firmware, and it never leaves your machine.
+#   everything else                  built here from source (docker/Dockerfile)
 #
-# --artifacts-only stops after the Docker build: build/Image, build/docker-out/
-# and guest/out/, which is everything the packaging stagers take.
-# It needs no Pioneer rootfs.
+# Outputs (all under build/, which git ignores):
+#   Image                       our Linux 6.6 kernel
+#   initramfs-patched.cpio.gz   your deck's system + the emulator patches
+#   az-mnt.img                  the emulated eMMC (settings + cache), made once
+#   usb.img                     an empty emulated USB stick, made once
+#   ssh/az-emu_ed25519          the SSH key for THIS install (made once)
 #
-# Prerequisites:
-#   docker with BuildKit support (Docker Desktop / OrbStack)
-
+# Needs: Docker (Docker Desktop, colima or OrbStack), ssh-keygen, Python 3
+# (python3, python or the Windows py launcher, whichever runs).
 set -euo pipefail
-REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$(dirname "$0")" && pwd)"
+BUILD="${AZ_EMU_BUILD:-$REPO/build}"   # AZ_EMU_BUILD: put the build on another disk
+DOCKER_OUT="$BUILD/docker-out"
+PULLED="$BUILD/initramfs-work-pulled/initramfs.cpio.gz"
+KEY="$BUILD/ssh/az-emu_ed25519"
+NEED_GB="${AZ_EMU_NEED_GB:-}"
 
-CLEAN_AFTER_BUILD=0
-ARTIFACTS_ONLY=0
-# SSH access (dropbear on port 2222) is for development only and is off by
-# default in shipping builds: the SSH steps of the rootfs patches
-# (02-dropbear-install, 03-dropbear-enable, 04-root-password,
-# 05-serial-autologin) do nothing unless this is set. Enabling SSH leaves a
-# passwordless root login on the QEMU host-forwarded port 2222, so enable it
-# only on a development machine.
-ENABLE_SSH=0
+NO_IMAGE=0; CLEAN=0; IMAGE_ONLY=0
 for arg in "$@"; do
     case "$arg" in
-        --clean)      CLEAN_AFTER_BUILD=1 ;;
-        --enable-ssh) ENABLE_SSH=1 ;;
-        --artifacts-only) ARTIFACTS_ONLY=1 ;;
-        -h|--help)
-            echo "Usage: ./build.sh [--clean] [--enable-ssh] [--artifacts-only]"
-            echo "  --clean            remove the unpacked rootfs workspace after the build"
-            echo "  --enable-ssh       enable dropbear and passwordless root (development only)"
-            echo "  --artifacts-only   build the kernel, modules and guest tools only; no initramfs"
-            exit 0
-            ;;
-        *)
-            echo "ERROR: unknown argument: $arg" >&2
-            echo "Usage: ./build.sh [--clean] [--enable-ssh] [--artifacts-only]" >&2
-            exit 1
-            ;;
+        --no-image) NO_IMAGE=1 ;;
+        --clean)    CLEAN=1 ;;
+        --image-only) IMAGE_ONLY=1 ;;
+        -h|--help)  sed -n '5,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "unknown option: $arg (try --help)" >&2; exit 1 ;;
     esac
 done
-export ENABLE_SSH
 
-DOCKER_OUT="$REPO_ROOT/build/docker-out"
-# DOCKER_CACHE is a persistent BuildKit cache on disk. OrbStack's default
-# builder cache is too small for the kernel build tree, so GC evicts layers
-# between runs even with an unchanged Dockerfile. mode=max also keeps the
-# intermediate layers. This needs a docker-container buildx builder (see
-# docker/ensure-buildx-builder.sh), because the default "docker" driver cannot
-# use --cache-to type=local. CDJ3K_DOCKER_CACHE overrides the directory; `gha`
-# puts the layers in the GitHub Actions cache instead.
-DOCKER_CACHE="${CDJ3K_DOCKER_CACHE-$REPO_ROOT/build/docker-cache}"
-DOCKER_BUILDER="$("$REPO_ROOT/docker/ensure-buildx-builder.sh")"
-WORKDIR="$REPO_ROOT/build/work"
-ROOTFS_DIR="$WORKDIR/rootfs"
-ROOTFS_MODULES="$ROOTFS_DIR/lib/modules"
-INITRAMFS_ORIG="$REPO_ROOT/build/initramfs-work/initramfs.cpio.gz"
+say()  { printf '\n==> %s\n' "$*"; }
+# source_hash PATCH_DIRS|GUEST_DIRS: the hash of those sources (tools/azemu.py).
+source_hash() {
+    "${PY[@]}" -c "import sys; sys.path.insert(0, sys.argv[1]); import azemu
+print(azemu.source_hash(*getattr(azemu, sys.argv[2])))" "$REPO/tools" "$1"
+}
+fail() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
-echo "================================================================"
-echo "  cdj3k-emu guest build (Linux 6.6 LTS)"
-echo "================================================================"
-echo ""
+# Git Bash on Windows rewrites /paths in the arguments of Windows programs. That is
+# what python.exe needs (it gets G:\... for /g/...), but it would mangle Docker's
+# "G:/x:/src:ro" volume specs, so ONLY the docker commands below run with
+# MSYS_NO_PATHCONV=1 and get Windows paths from hostpath.
+case "$(uname -s)" in
+    MINGW*|MSYS*) hostpath() { (cd "$1" && pwd -W); } ;;
+    *)            hostpath() { (cd "$1" && pwd); } ;;
+esac
 
-if [[ "$ARTIFACTS_ONLY" -eq 0 && ! -f "$INITRAMFS_ORIG" ]]; then
-    echo "ERROR: source initramfs not found: $INITRAMFS_ORIG" >&2
-    exit 1
-fi
-
-# [1/5] Build the kernel, the modules and the tools in Docker.
-echo "[1/5] Building the artifacts (docker/Dockerfile, target artifacts)..."
-rm -rf "$DOCKER_OUT"
-if [[ "$DOCKER_CACHE" == gha ]]; then
-    CACHE_ARGS=(--cache-from "type=gha,scope=guest"
-                --cache-to "type=gha,scope=guest,mode=max")
-else
-    mkdir -p "$DOCKER_CACHE"
-    CACHE_ARGS=(--cache-from "type=local,src=$DOCKER_CACHE"
-                --cache-to "type=local,dest=$DOCKER_CACHE,mode=max")
-fi
-docker buildx build \
-    --builder "$DOCKER_BUILDER" \
-    --platform linux/arm64 \
-    --provenance=false \
-    --target artifacts \
-    "${CACHE_ARGS[@]}" \
-    --output "type=local,dest=$DOCKER_OUT" \
-    -f "$REPO_ROOT/docker/Dockerfile" \
-    "$REPO_ROOT"
-echo ""
-
-cp "$DOCKER_OUT/Image" "$REPO_ROOT/build/Image"
-echo "  ✓  Copied Image to build/Image"
-
-# Save the tools to guest/out/ for the packaging stagers.
-mkdir -p "$REPO_ROOT/guest/out"
-# All of these are required: packaging/macos/stage.sh refuses a bundle without
-# cfgd or pc_link_bridge, and the patch scripts abort the rootfs provisioning
-# when a tool they install is missing. Copying them here makes an incomplete
-# build fail at once.
-for bin in deck_shim.so subucom_forwarder_aarch64 subucom_live_aarch64 cfgd_aarch64 \
-           pc_link_bridge_aarch64; do
-    cp "$DOCKER_OUT/$bin" "$REPO_ROOT/guest/out/$bin"
+command -v docker >/dev/null || fail "Docker is not installed (see docs/requirements.md)."
+docker info >/dev/null 2>&1 || fail "Docker is installed but not running. Start Docker Desktop (or colima) and try again."
+command -v ssh-keygen >/dev/null || fail "ssh-keygen not found (it comes with OpenSSH)."
+# Python 3: python3 on macOS/Linux; Windows installs give python and py instead (and
+# may have a python3 that only opens the Microsoft Store), so test that each one runs.
+PY=()
+for cand in python3 python "py -3"; do
+    if $cand -c 'import sys; sys.exit(sys.version_info < (3, 9))' >/dev/null 2>&1; then
+        read -ra PY <<<"$cand"; break
+    fi
 done
+(( ${#PY[@]} )) || fail "Python 3.9 or newer not found (tried python3, python and py -3)."
+lf_rc=0; "${PY[@]}" "$REPO/tools/check-lf.py" >/dev/null || lf_rc=$?
+case "$lf_rc" in
+    0) ;;
+    1) fail "CRLF line endings in the checkout (listed above)." ;;
+    *) fail "tools/check-lf.py could not run (exit $lf_rc, error above)." ;;
+esac
 
-# Build dropbear for firmware that ships no SSH server, such as the CDJ-1500X.
-# Like qemu/, it has its own clone and build script.
-bash "$REPO_ROOT/dropbear/build.sh"
-cp "$REPO_ROOT/dropbear/out/dropbear_aarch64" "$REPO_ROOT/dropbear/out/dropbear_aarch64.LICENSE" \
-    "$REPO_ROOT/guest/out/"
+if [[ "$NO_IMAGE" == 0 && ! -f "$PULLED" ]]; then
+    cat >&2 <<MSG
 
-if [[ "$ARTIFACTS_ONLY" -eq 1 ]]; then
-    echo ""
-    echo "  Artifacts: build/Image, build/docker-out/, guest/out/"
+The emulator needs the system from YOUR deck, and it is not here yet:
+    $PULLED
+
+This repository ships no firmware. Pull the system from your own rooted
+XDJ-AZ (firmware 2.00+) first:
+    ${PY[*]} tools/az-emu-pull.py --host DECK-IP --key path/to/private-key
+
+To build only our own parts now (kernel, modules, tools), run:
+    ./build.sh --no-image
+MSG
+    exit 2
+fi
+
+mkdir -p "$BUILD"
+# A first full build needs ~10 GB (Docker's kernel build); the image step alone ~2 GB.
+[[ -n "$NEED_GB" ]] || { [[ "$IMAGE_ONLY" == 1 ]] && NEED_GB=2 || NEED_GB=10; }
+free_gb=$("${PY[@]}" -c "import shutil,sys; print(shutil.disk_usage(sys.argv[1]).free // 2**30)" "$BUILD")
+if (( free_gb < NEED_GB )) && [[ "${AZ_EMU_SKIP_DISK_CHECK:-0}" != 1 ]]; then
+    fail "only ${free_gb} GB free where build/ lives; the build needs about ${NEED_GB} GB
+       (the kernel build inside Docker plus the images). Free some space, or set
+       AZ_EMU_SKIP_DISK_CHECK=1 if you know your Docker disk lives elsewhere."
+fi
+# Windows: Docker Desktop keeps its disk on the system drive (under %LOCALAPPDATA%), not
+# where build/ lives, and the kernel build fills it by ~10 GB. Check that drive too.
+case "$(uname -s)" in MINGW*|MSYS*)
+    if [[ "$IMAGE_ONLY" == 0 && -n "${LOCALAPPDATA:-}" && "${AZ_EMU_SKIP_DISK_CHECK:-0}" != 1 ]]; then
+        sys_gb=$("${PY[@]}" -c "import shutil,sys; print(shutil.disk_usage(sys.argv[1]).free // 2**30)" "$LOCALAPPDATA")
+        (( sys_gb >= 15 )) || fail "only ${sys_gb} GB free on the drive with Docker Desktop's disk
+       ($LOCALAPPDATA); building the kernel here needs about 15 GB there.
+       Recommended on Windows: copy build/docker-out/ from a Mac build and run
+       ./build.sh --image-only (see docs/windows.md)."
+    fi ;;
+esac
+
+say "[1/4] SSH key for this install"
+if [[ ! -f "$KEY" ]]; then
+    mkdir -p "$(dirname "$KEY")"
+    ssh-keygen -q -t ed25519 -N '' -C "xdj-az-emu $(date +%Y-%m-%d)" -f "$KEY"
+    case "$(uname -s)" in   # Windows OpenSSH refuses a key others can read
+        MINGW*|MSYS*) icacls "$(cygpath -w "$KEY")" /inheritance:r /grant:r "$USERNAME:(R)" >/dev/null ;;
+    esac
+    echo "    made $KEY (it never leaves this machine; the image gets the .pub)"
+else
+    echo "    using $KEY"
+fi
+
+say "[2/4] Kernel, modules, shim, tools and dropbear (docker/Dockerfile)"
+if [[ "$IMAGE_ONLY" == 1 ]]; then
+    for f in Image ep122_shim.so master_out.so movewin dropbear cfgd_aarch64 dummy_drv.so modules/subucom_virt.ko; do
+        [[ -f "$DOCKER_OUT/$f" ]] || fail "--image-only needs build/docker-out/$f from an earlier ./build.sh"
+    done
+    echo "    reusing build/docker-out/ (--image-only)"
+else
+    echo "    The first build downloads Linux and compiles it: 10-20 minutes on Apple"
+    echo "    Silicon, much longer on an x86_64 host (arm64 emulation)."
+    rm -rf "$DOCKER_OUT"
+    MSYS_NO_PATHCONV=1 docker buildx build --platform linux/arm64 --target artifacts \
+        --output "type=local,dest=$(hostpath "$BUILD")/docker-out" \
+        -f "$(hostpath "$REPO")/docker/Dockerfile" "$(hostpath "$REPO")"
+    # Which guest sources these were built from, for the image's build stamp.
+    source_hash GUEST_DIRS > "$DOCKER_OUT/guest.hash"
+fi
+cp "$DOCKER_OUT/Image" "$BUILD/Image"
+echo "    build/Image: $(du -h "$BUILD/Image" | cut -f1)"
+
+if [[ "$NO_IMAGE" == 1 ]]; then
+    say "Done (--no-image). Our parts are in build/docker-out/ and build/Image."
+    echo "    Pull your deck's system with tools/az-emu-pull.py, then run ./build.sh."
     exit 0
 fi
 
-# [2/5] Restore the Pioneer rootfs.
-echo "[2/5] Restoring rootfs from: $INITRAMFS_ORIG"
-rm -rf "$ROOTFS_DIR"
-mkdir -p "$ROOTFS_DIR"
-(
-    cd "$ROOTFS_DIR"
-    { gzip -dc "$INITRAMFS_ORIG" 2>/dev/null || true; } | cpio -i --make-directories 2>/dev/null
-)
-mkdir -p "$ROOTFS_MODULES"
-echo "      Restored the rootfs at $ROOTFS_DIR"
-echo ""
+say "[3/4] Boot image from your deck's system"
+# The image's build stamp (/etc/az-emu-build): the hash of this checkout's patches, and
+# of the guest sources build/docker-out/ came from. tools/az-emu-health.py compares it
+# with the checkout at every start and says when the image is older.
+stamp="patches $(source_hash PATCH_DIRS)
+guest $(cat "$DOCKER_OUT/guest.hash" 2>/dev/null || echo unknown)"
+# The host's native alpine: this step only unpacks, edits files and repacks, it
+# never runs an aarch64 program, so no emulation is needed on an x86_64 host.
+MSYS_NO_PATHCONV=1 docker run --rm \
+    -e AZ_EMU_ANY_FIRMWARE="${AZ_EMU_ANY_FIRMWARE:-0}" -e AZ_EMU_STAMP="$stamp" \
+    -v "$(hostpath "$REPO"):/src:ro" -v "$(hostpath "$BUILD"):/build" \
+    alpine:3.19 sh /src/initramfs-patch/build-image.sh
 
-# [3/5] Stage the modules where patch script 22 finds them.
-echo "[3/5] Staging the out-of-tree modules..."
-VANILLA_MODS_STAGE="$REPO_ROOT/initramfs-patch/vanilla-modules"
-rm -rf "$VANILLA_MODS_STAGE"
-mkdir -p "$VANILLA_MODS_STAGE"
-for ko in subucom_virt.ko virtio_snd.ko udev_usb1.ko; do
-    cp "$DOCKER_OUT/modules/$ko" "$VANILLA_MODS_STAGE/"
-    echo "  ✓  staged $ko"
-done
-cp "$DOCKER_OUT/dummy_drv.so" "$REPO_ROOT/initramfs-patch/dummy_drv.so"
-echo "  ✓  staged dummy_drv.so"
-
-# Install the shared tools into the rootfs. The Docker artifacts carry an
-# `_aarch64` suffix; strip it on install, because the services use the bare
-# name (subucom-forwarder.service runs /usr/bin/subucom_forwarder). The .app
-# path in packaging/macos/stage.sh strips it the same way.
-mkdir -p "$ROOTFS_DIR/usr/bin"
-for tool in subucom_live subucom_forwarder; do
-    cp "$DOCKER_OUT/${tool}_aarch64" "$ROOTFS_DIR/usr/bin/$tool"
-    chmod 755 "$ROOTFS_DIR/usr/bin/$tool"
-done
-
-mkdir -p "$ROOTFS_DIR/home/root"
-cp "$DOCKER_OUT/deck_shim.so" "$ROOTFS_DIR/home/root/deck_shim.so"
-chmod 755 "$ROOTFS_DIR/home/root/deck_shim.so"
-
-
-USB_IMG_SRC="$REPO_ROOT/build/usb.img"
-if [[ -f "$USB_IMG_SRC" ]]; then
-    mkdir -p "$ROOTFS_DIR/opt"
-    cp "$USB_IMG_SRC" "$ROOTFS_DIR/opt/usb.img"
-    echo "  ✓  Copied usb.img to /opt/usb.img"
+say "[4/4] Disks"
+# 14 GB, the smallest whole size that settles: the reserve partition (/mnt) gets the
+# disk less 0.7 GiB for the other partitions; ext4 keeps 5% of it for root; the deck
+# program's five track caches take 9.5 GiB (5 x 2042626048 bytes); and the deck's
+# emmc-fs.sh reformats /mnt at every boot when less than 2 GiB is left (patch 32). At
+# 14 GB about 2.9 GiB is left; at 13 GB, 1.9. Sparse, so it costs the host only what
+# the guest writes. The boot scripts enlarge an older, smaller image.
+if [[ ! -f "$BUILD/az-mnt.img" ]]; then
+    gb="${AZ_EMU_MNT_GB:-14}"
+    case "$(uname -s)" in
+        MINGW*|MSYS*)
+            # Python's truncate() WRITES ZEROS on Windows, which would allocate the whole
+            # image. Make it sparse instead: create it, mark it sparse, then extend with
+            # SetLength (which allocates nothing once the sparse flag is set).
+            win="$(hostpath "$BUILD")/az-mnt.img"
+            : > "$BUILD/az-mnt.img"
+            fsutil sparse setflag "$win" >/dev/null
+            powershell.exe -NoProfile -Command \
+                "\$f=[IO.File]::Open('$win','Open','ReadWrite'); \$f.SetLength([int64]$gb*1GB); \$f.Close()"
+            ;;
+        *)
+            "${PY[@]}" -c "import sys; f=open(sys.argv[1],'wb'); f.truncate(int(sys.argv[2])<<30)" "$BUILD/az-mnt.img" "$gb"
+            ;;
+    esac
+    echo "    made build/az-mnt.img (${gb} GB, sparse; partitioned on first boot)"
+else
+    echo "    keeping build/az-mnt.img (your emulator's settings and installed mods)"
 fi
-echo ""
+[[ -f "$BUILD/usb.img" ]] || "$REPO/tools/make-usb.sh" 256 "$BUILD/usb.img"
 
-# [4/5] Apply the rootfs patches.
-echo "[4/5] Applying the rootfs patches..."
-"$REPO_ROOT/initramfs-patch/patch-rootfs.sh" "$ROOTFS_DIR"
-rm -rf "$VANILLA_MODS_STAGE"
-rm -f "$REPO_ROOT/initramfs-patch/dummy_drv.so"
-echo ""
-
-# [5/5] Repack the initramfs.
-echo "[5/5] Repacking the initramfs in Docker..."
-docker run --rm \
-    -v "$WORKDIR":/work \
-    -v "$REPO_ROOT/initramfs-patch/repack.sh":/work/repack.sh:ro \
-    arm64v8/alpine:3.19 \
-    sh /work/repack.sh
-mv "$WORKDIR/initramfs-patched.cpio.gz" "$REPO_ROOT/build/initramfs-patched.cpio.gz"
-
-echo ""
-echo "================================================================"
-echo "  Build complete."
-echo ""
-echo "  Kernel:    build/Image"
-echo "  Initramfs: build/initramfs-patched.cpio.gz"
-echo "================================================================"
-
-if [[ "$CLEAN_AFTER_BUILD" -eq 1 ]]; then
-    rm -rf "$WORKDIR/rootfs"
-    echo "  Workspace cleaned."
+if [[ "$CLEAN" == 1 ]]; then
+    docker builder prune -f >/dev/null && echo "    Docker build cache removed"
 fi
+
+say "Build complete"
+cat <<DONE
+    Kernel:  build/Image
+    Image:   build/initramfs-patched.cpio.gz
+    Next:    macOS: build QEMU once (qemu/build.sh), then open AZ-EMU.app.
+             Windows: set AZ_QEMU to qemu-system-aarch64.exe, then run az-preview
+             or tools/az-boot-win.ps1 (docs/windows.md).
+DONE

@@ -1,4 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 obj-m += subucom_virt.o
 
-# docker/Dockerfile builds this module in its builder stage:
-# make -C /kernel M=/subucom_virt modules ARCH=arm64
+# Build with: make -C /kernel M=$(pwd) modules ARCH=arm64
+# (inside the modules/build Docker container)

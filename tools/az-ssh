@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# az-ssh: a root shell (or one command) in the running emulator.
+#
+#   tools/az-ssh                    interactive shell
+#   tools/az-ssh 'systemctl status EP147'
+#
+# Key-only: ./build.sh made build/ssh/az-emu_ed25519 for this install and put the
+# public key in the image. The guest's port 22 is forwarded to 127.0.0.1:2222 only.
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+KEY="${AZ_EMU_SSH_KEY:-${AZ_EMU_BUILD:-$REPO/build}/ssh/az-emu_ed25519}"
+[ -f "$KEY" ] || { echo "No emulator SSH key at $KEY. Run ./build.sh first." >&2; exit 1; }
+exec ssh -i "$KEY" -p "${AZ_EMU_SSH_PORT:-2222}" -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+  -o ConnectTimeout=45 root@127.0.0.1 "$@"

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/drivers/gpu/drm/virtio/virtgpu_display.c b/drivers/gpu/drm/virtio/virtgpu_display.c
 index ad924a850..34dd2edbd 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_display.c

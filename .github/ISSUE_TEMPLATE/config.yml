@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://discord.gg/SGBxQPK24J
+    about: Ask in the AZ-MODS Discord. Issues are for bugs and concrete requests.
+  - name: Report a security problem
+    url: https://github.com/Kyle-Hosman/xdj-az-emu/security/advisories/new
+    about: Report it privately, never in a public issue. See SECURITY.md.

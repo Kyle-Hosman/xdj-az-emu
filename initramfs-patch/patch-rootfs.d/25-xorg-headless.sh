@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: MIT OR Apache-2.0
+# SPDX-License-Identifier: GPL-3.0-only
+# Derived from cdj3k-emu (MIT OR Apache-2.0); see ATTRIBUTION.md.
 # Patch 25: the headless Xorg config, which uses dummy_drv.so when the guest
 # has no /dev/dri/card0.
 #
@@ -18,11 +19,11 @@
 #        - Without card0, it runs exec X :0 -configdir /etc/x11-headless-conf.
 #      Both modes then work without rebuilding the initramfs.
 #   3. Removes the stock CPU pins: the taskset in x11-only.sh (core 3 on the
-#      CDJ-3000, core 5 on the CDJ-3000X) and, on the CDJ-3000X, the
-#      `taskset -pc 5` that apl_start.sh applies to Xorg and its InputThread.
-#      apl_start.sh also sets
-#      sched_rt_runtime_us=-1, so under emulation the player's real-time
-#      threads on the pinned core starve Xorg.
+#      CDJ-3000, core 5 on the CDJ-3000X and the XDJ-AZ) and, on those two,
+#      the `taskset -pc 5` that apl_start.sh applies to Xorg and its
+#      InputThread. apl_start.sh also sets sched_rt_runtime_us=-1, so under
+#      emulation the player's real-time threads on the pinned core starve
+#      Xorg.
 #
 # Patch 22 installs the dummy_drv.so binary (Xorg ABI 24.0, Ubuntu 20.04
 # arm64) in /usr/lib/xorg/modules/drivers/.
@@ -75,6 +76,12 @@ cat > "$X11_SH" << 'SHEOF'
 #!/bin/sh
 # card0 exists when QEMU exposes virtio-gpu; without it, X runs headless.
 if [ -e /dev/dri/card0 ]; then
+    # Pin the GPU's BusID: with a 9p share present (tools/az-macusb.sh) Xorg otherwise
+    # refuses "Cannot run in framebuffer mode. Please specify busIDs".
+    C=/etc/X11/xorg.conf.d/20-modesetting.conf
+    P=$(readlink -f /sys/class/drm/card0/device)
+    sed -i '/BusID/d' "$C"
+    sed -i "s|    Driver      \"modesetting\"|&\n    BusID       \"platform:$P\"|" "$C"
     exec X :0
 else
     exec X :0 -configdir /etc/x11-headless-conf

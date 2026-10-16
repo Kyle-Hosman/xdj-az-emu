@@ -1,19 +1,10 @@
-# Keep large and unused directories out of the Docker build context. The
-# guest build copies only guest/, without guest/out/.
-#
-# guest/out/ must stay excluded. A plain host `make` builds .o files there with
-# the musl cross-compiler; in the build context they make the container's
-# `make shim` do nothing ("Nothing to be done"). The musl shim then ships
-# instead of the glibc one, and every process that preloads it, EP122 included,
-# dies with "libc.so: cannot open shared object file".
-guest/out/
+# Only guest/ and docker/ are needed in the Docker build context.
 build/
-dist/
 target/
 .git/
-app/
 tools/
 initramfs-patch/
 qemu/
-crates/
 docs/
+az-preview/
+guest/out/

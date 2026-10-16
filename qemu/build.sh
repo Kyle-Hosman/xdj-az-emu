@@ -1,34 +1,21 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Derived from cdj3k-emu (MIT OR Apache-2.0); see ATTRIBUTION.md.
 # qemu/build.sh
 #
-# Clone QEMU at QEMU_REF, apply qemu/patches/*.patch in order, and build
-# qemu-system-aarch64 for this host.
+# macOS (Apple Silicon): clone QEMU at a pinned commit, apply qemu/patches/, and
+# build qemu-system-aarch64 with HVF (hardware virtualization) and Cocoa.
+# Needs Homebrew: brew install glib pixman libslirp ninja pkgconf python@3.11
+# (Windows uses the official QEMU build instead; see docs/requirements.md.)
 #
 # Usage:
 #   cd <repo-root>
-#   bash qemu/build.sh                      # for this host
-#   bash qemu/build.sh --windows x86_64     # Windows x86_64 (TCG), cross-built in Docker
-#   bash qemu/build.sh --windows aarch64    # Windows arm64 (WHPX), cross-built in Docker
-#   bash qemu/build.sh --macos x86_64       # one slice of the universal .app
-#   bash qemu/build.sh --macos arm64        #   (packaging/macos/stage.sh --arch universal)
-#
-# On Windows, run it from an MSYS2 shell: UCRT64 for x86_64, CLANGARM64 for
-# arm64 (`--windows` is optional there and must match the shell). Packages:
-#   UCRT64:      pacman -S --needed git base-devel mingw-w64-ucrt-x86_64-{toolchain,python,ninja,pkgconf,glib2,pixman,libslirp,zlib}
-#   CLANGARM64:  pacman -S --needed git base-devel mingw-w64-clang-aarch64-{toolchain,python,ninja,pkgconf,glib2,pixman,libslirp,zlib}
+#   bash qemu/build.sh
 #
 # Output:
-#   qemu/src/                      - QEMU source tree
-#   qemu/build/                    - build artefacts
-#   qemu/install/                  - installed binaries (qemu-system-aarch64 lives here)
-#   qemu/build-windows-<arch>/     - Windows build artefacts
-#   qemu/install-windows-<arch>/   - qemu-system-aarch64.exe, qemu-img.exe,
-#                                    every DLL they load and QEMU's COPYING,
-#                                    in one directory
-#   qemu/build-macos-<arch>/       - macOS slice build artefacts
-#   qemu/install-macos-<arch>/     - bin/qemu-img and lib/libcdj3k-emu-qemu.dylib
-#                                    for one slice, linked against the static
-#                                    libraries of qemu/macos-deps.sh
+#   qemu/src/        - QEMU source tree
+#   qemu/build/      - build artifacts
+#   qemu/install/    - installed binaries (qemu-system-aarch64 lives here)
 #
 # Re-running is idempotent: clone and patch steps are skipped if already done.
 
@@ -36,80 +23,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PATCHES_DIR="${SCRIPT_DIR}/patches"
-SHIM_DIR="${SCRIPT_DIR}/shim"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SRC_DIR="${SCRIPT_DIR}/src"
+BUILD_DIR="${SCRIPT_DIR}/build"
+INSTALL_DIR="${SCRIPT_DIR}/install"
 
-# What this run builds for:
-#   HOST_OS=Darwin|Linux   the machine running the script
-#   HOST_OS=Windows        an MSYS2 shell (native build)
-#   HOST_OS=WindowsCross   inside the image of docker/Dockerfile.windows-qemu
-# WIN_ARCH is x86_64 or aarch64 for both Windows kinds.
-WIN_ARCH=""
-# MAC_ARCH is x86_64 or arm64 for a macOS slice build.
-MAC_ARCH=""
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --macos)
-            MAC_ARCH="${2:-}"
-            case "${MAC_ARCH}" in
-                x86_64|arm64) shift 2 ;;
-                *) echo "ERROR: --macos takes x86_64 or arm64" >&2; exit 1 ;;
-            esac
-            ;;
-        --windows)
-            WIN_ARCH="${2:-}"
-            case "${WIN_ARCH}" in
-                x86_64|aarch64) shift 2 ;;
-                *) echo "ERROR: --windows takes x86_64 or aarch64" >&2; exit 1 ;;
-            esac
-            ;;
-        *) echo "ERROR: unknown argument: $1" >&2; exit 1 ;;
-    esac
-done
-
-WIN_DOCKER=0
-if [ -n "${CDJ3K_WINDOWS_CROSS:-}" ]; then
-    HOST_OS="WindowsCross"
-    WIN_ARCH="${CDJ3K_WINDOWS_CROSS}"
-elif [ -n "${MSYSTEM:-}" ]; then
-    HOST_OS="Windows"
-    case "${MSYSTEM}" in
-        UCRT64)     msys_arch="x86_64" ;;
-        CLANGARM64) msys_arch="aarch64" ;;
-        *) echo "ERROR: MSYSTEM=${MSYSTEM}; use the UCRT64 (x86_64) or CLANGARM64 (arm64) shell" >&2
-           exit 1 ;;
-    esac
-    if [ -n "${WIN_ARCH}" ] && [ "${WIN_ARCH}" != "${msys_arch}" ]; then
-        echo "ERROR: --windows ${WIN_ARCH} does not match the ${MSYSTEM} shell" >&2
-        exit 1
-    fi
-    WIN_ARCH="${msys_arch}"
-else
-    HOST_OS="$(uname -s)"
-    if [ -n "${WIN_ARCH}" ]; then
-        WIN_DOCKER=1
-    fi
-fi
-
-if [ -n "${MAC_ARCH}" ] && [ "${HOST_OS}" != "Darwin" ]; then
-    echo "ERROR: --macos builds on macOS only" >&2
-    exit 1
-fi
-
-if [ -n "${WIN_ARCH}" ]; then
-    BUILD_DIR="${SCRIPT_DIR}/build-windows-${WIN_ARCH}"
-    INSTALL_DIR="${SCRIPT_DIR}/install-windows-${WIN_ARCH}"
-elif [ -n "${MAC_ARCH}" ]; then
-    BUILD_DIR="${SCRIPT_DIR}/build-macos-${MAC_ARCH}"
-    INSTALL_DIR="${SCRIPT_DIR}/install-macos-${MAC_ARCH}"
-else
-    BUILD_DIR="${SCRIPT_DIR}/build"
-    INSTALL_DIR="${SCRIPT_DIR}/install"
-fi
-
-# QEMU_REF is a master commit from 2026-05-06. It has the HVF in-kernel GIC
-# support, which no stable release up to 11.0.0 includes.
+# Pinned to a master snapshot that includes the HVF in-kernel GIC support
+# (Mohamed Mediouni's series). Stable QEMU 11.0.0 predates that work, so a
+# master pin is required for the in-kernel vGIC.
 QEMU_REF="ee7eb612be8f8886d48c1d0c1f1c65e495138f83"
 QEMU_REPO="https://github.com/qemu/qemu.git"
 
@@ -123,232 +43,121 @@ if [ ! -d "${SRC_DIR}/.git" ]; then
 else
     current_sha="$(git -C "${SRC_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"
     if [ "${current_sha}" != "${QEMU_REF}" ]; then
-        echo "==> The QEMU source is at ${current_sha:0:12}, not ${QEMU_REF:0:12}."
-        echo "    Deleting ${SRC_DIR} and fetching it again."
+        echo "==> QEMU src at ${current_sha:0:12} does not match required ${QEMU_REF:0:12}"
+        echo "    Wiping ${SRC_DIR} and re-fetching."
         rm -rf "${SRC_DIR}" "${BUILD_DIR}"
         need_fetch=1
     fi
 fi
 
 if [ "${need_fetch}" = "1" ]; then
-    echo "==> Fetching QEMU at ${QEMU_REF} …"
+    echo "==> Fetching QEMU @ ${QEMU_REF} …"
     git init -q "${SRC_DIR}"
     git -C "${SRC_DIR}" remote add origin "${QEMU_REPO}"
     git -C "${SRC_DIR}" fetch --depth=1 origin "${QEMU_REF}"
     git -C "${SRC_DIR}" checkout -q FETCH_HEAD
-    # An aarch64-softmmu build needs no submodules.
+    # No submodules needed for a minimal aarch64-softmmu+cocoa build.
 else
-    echo "==> The source tree is already at ${QEMU_REF:0:12}; skipping the fetch"
+    echo "==> Source tree already at ${QEMU_REF:0:12} - skipping fetch"
 fi
 
 # --------------------------------------------------------------------------
 # 2. Apply patches
 # --------------------------------------------------------------------------
-# Every QEMU change is a unified-diff patch in qemu/patches/, made against
-# QEMU_REF above. After a QEMU_REF bump, regenerate a patch by editing src/
-# and running `git -C src diff > patches/NN-foo.patch`.
+# Every QEMU modification (overlay file replacements, ivshmem gating, virtio
+# hot-swap fix, etc.) is captured as a unified-diff patch in qemu/patches/.
+# Patches are pinned to the QEMU_REF above; if the SHA is bumped, regenerate
+# them by editing src/ and running `git -C src diff > patches/NN-foo.patch`,
+# then restore the SPDX line at the top (git apply ignores text before the diff).
 #
-# A patch that does not apply means that upstream QEMU changed under it. The
-# script stops, so a half-patched src/ is never built.
+# A failure to apply means upstream QEMU drifted under one of our anchors -
+# fail loudly here so the user catches it before a half-patched src/ silently
+# produces a binary missing features or behaving oddly.
 
 if ! ls "${PATCHES_DIR}"/*.patch >/dev/null 2>&1; then
     echo "ERROR: no patches found in ${PATCHES_DIR}"
     exit 1
 fi
 
-# The tree is patched as a whole: a stamp of QEMU_REF and every patch's
-# contents records what src/ was made from. When it differs, src/ goes back to
-# QEMU_REF and the series is applied again in order, since a later patch may
-# touch what an earlier one did.
-STAMP="${SRC_DIR}/.git/cdj3k-patches"
-want_stamp="$( { echo "${QEMU_REF}"; cat "${PATCHES_DIR}"/*.patch; } | git -C "${SRC_DIR}" hash-object --stdin )"
+# Check whether any patch is already applied to the current tree (idempotent
+# re-runs after a successful build land here).  We probe with --reverse
+# --check: if reversing applies cleanly, the patch is already in.
 patch_changed=0
-if [ -f "${STAMP}" ] && [ "$(cat "${STAMP}")" = "${want_stamp}" ]; then
-    echo "==> The QEMU patches are already applied; skipping"
-else
-    echo "==> Applying QEMU patches from $(basename "${PATCHES_DIR}")/"
-    git -C "${SRC_DIR}" checkout -q -- .
-    git -C "${SRC_DIR}" clean -fdq
-    for p in "${PATCHES_DIR}"/*.patch; do
-        name="$(basename "$p")"
-        if ! git -C "${SRC_DIR}" apply --check "$p" 2>/dev/null; then
-            echo "    [FAIL]   ${name} does not apply cleanly."
-            echo
-            echo "Upstream QEMU has probably changed under this patch."
-            echo "To regenerate the patch:"
-            echo "  - inspect it with: git -C ${SRC_DIR} apply --check ${p}"
-            echo "  - rebase the change by hand, then run:"
-            echo "      git -C ${SRC_DIR} diff -- <paths> > ${p}"
-            exit 1
-        fi
-        git -C "${SRC_DIR}" apply "$p"
-        echo "    [apply]  ${name}"
-    done
-    echo "${want_stamp}" > "${STAMP}"
+echo "==> Applying QEMU patches from $(basename "${PATCHES_DIR}")/"
+for p in "${PATCHES_DIR}"/*.patch; do
+    name="$(basename "$p")"
+    if git -C "${SRC_DIR}" apply --reverse --check "$p" >/dev/null 2>&1; then
+        echo "    [skip]   ${name} - already applied"
+        continue
+    fi
+    if ! git -C "${SRC_DIR}" apply --check "$p" 2>/dev/null; then
+        echo "    [FAIL]   ${name} - does not apply cleanly"
+        echo
+        echo "Upstream QEMU likely drifted under this patch's anchors."
+        echo "Regenerate the patch:"
+        echo "  - inspect: git -C ${SRC_DIR} apply --check ${p}"
+        echo "  - rebase the change manually, then:"
+        echo "      git -C ${SRC_DIR} diff -- <paths> > ${p}"
+        exit 1
+    fi
+    git -C "${SRC_DIR}" apply "$p"
+    echo "    [apply]  ${name}"
     patch_changed=1
-fi
+done
 
-# Delete build.ninja after the patches change, so configure runs again:
-# meson caches the Kconfig results in build.ninja, and a stale build
-# directory would miss newly enabled symbols.
+# Force reconfigure when any patch landed - meson caches Kconfig results in
+# build.ninja, so a stale build dir won't pick up newly-enabled symbols.
 if [ "${patch_changed}" = "1" ] && [ -f "${BUILD_DIR}/build.ninja" ]; then
     echo "    invalidating ${BUILD_DIR}/build.ninja to trigger reconfigure"
     rm -f "${BUILD_DIR}/build.ninja"
 fi
 
 # --------------------------------------------------------------------------
-# 2b. Windows cross build: hand the rest of the script to the container
-#
-# The image (docker/Dockerfile.windows-qemu) holds llvm-mingw and the
-# libraries for both architectures. The repo is mounted at /work, so the
-# patched source tree and the output stay on the host. The container runs
-# this same script with CDJ3K_WINDOWS_CROSS set.
-# --------------------------------------------------------------------------
-
-if [ "${WIN_DOCKER}" = "1" ]; then
-    WIN_IMAGE="${CDJ3K_WINDOWS_QEMU_IMAGE:-cdj3k-emu-windows-qemu}"
-    command -v docker >/dev/null || { echo "ERROR: docker was not found." >&2; exit 1; }
-    if ! docker image inspect "${WIN_IMAGE}" >/dev/null 2>&1; then
-        echo "==> Building ${WIN_IMAGE} with llvm-mingw and the libraries (first run only) …"
-        docker build -f "${REPO_ROOT}/docker/Dockerfile.windows-qemu" \
-            -t "${WIN_IMAGE}" "${REPO_ROOT}"
-    fi
-    echo "==> Cross-building for Windows ${WIN_ARCH} in ${WIN_IMAGE} …"
-    docker run --rm \
-        --user "$(id -u):$(id -g)" \
-        -e HOME=/tmp \
-        -e CDJ3K_WINDOWS_CROSS="${WIN_ARCH}" \
-        -e JOBS="${JOBS:-}" \
-        -v "${REPO_ROOT}:/work" \
-        "${WIN_IMAGE}" \
-        bash qemu/build.sh
-    exit 0
-fi
-
-# --------------------------------------------------------------------------
 # 3. Configure
 #
-# --disable-pvg turns off ParavirtualizedGraphics.framework, the 3D
-# passthrough in hw/display/apple-gfx.m. The guest drives virtio-gpu into the
-# shm display and never instantiates it, and the framework's PGTask_t is
-# obsolete in the macOS 27 SDK, which fails the build under the option's
-# `auto` default.
+# --disable-pvg: ParavirtualizedGraphics.framework (3D passthrough to the host
+# via hw/display/apple-gfx.m). The guest never instantiates it, and the
+# framework's PGTask_t is obsolete in the macOS 27 SDK, which fails the build
+# under the option's `auto` default.
 # --------------------------------------------------------------------------
 
 mkdir -p "${BUILD_DIR}"
 
-# Per-host flags; everything else is identical across hosts.
-#
-#   macOS: HVF, and Cocoa because the .app needs a UI backend linked even
-#          though the display is the shm one.
-#   Linux: KVM, PipeWire, and no UI backend: the display is the shm one, and
-#          GTK/SDL would add to the package's dependency list.
-#   A macOS slice: HVF on arm64 only (an x86_64 Mac runs the guest under TCG),
-#          compiled for that arch at the deployment target against the static
-#          libraries of qemu/macos-deps.sh. An empty --cross-prefix makes it a
-#          cross build, so the TCG backend follows --cpu, not the build host.
-#   Windows: WHPX on arm64 (the guest is aarch64, so an x86_64 host runs TCG),
-#          slirp for user-mode networking, and no UI backend.
-EXE=""
-CROSS_FLAGS=()
-# configure writes `werror = true` into the machine file of a Windows build from
-# a git checkout, overriding --disable-werror.
-EXTRA_WARN_FLAGS=""
-case "${HOST_OS}" in
-    Darwin)
-        HOST_FLAGS=(--enable-hvf --enable-cocoa --disable-pvg)
-        if [ -n "${MAC_ARCH}" ]; then
-            bash "${SCRIPT_DIR}/macos-deps.sh" "${MAC_ARCH}"
-            MAC_DEPS="${SCRIPT_DIR}/deps-macos-${MAC_ARCH}"
-            export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-15.0}"
-            export PKG_CONFIG="${MAC_DEPS}/pkg-config"
-            MAC_SDK="$(xcrun --sdk macosx --show-sdk-path)"
-            MAC_MIN="-isysroot ${MAC_SDK} -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
-            # As in macos-deps.sh: a call newer than the target is an error.
-            EXTRA_WARN_FLAGS=" ${MAC_MIN} -Werror=unguarded-availability -Werror=unguarded-availability-new"
-            CC_MAC="clang -arch ${MAC_ARCH}"
-            if [ "${MAC_ARCH}" = "arm64" ]; then
-                MAC_CPU=aarch64
-            else
-                HOST_FLAGS=(--disable-hvf --enable-cocoa --disable-pvg)
-                MAC_CPU=x86_64
-            fi
-            # The libraries macos-deps.sh does not build stay off, so nothing
-            # resolves outside the prefix and the OS.
-            HOST_FLAGS+=(
-                --enable-slirp --enable-libusb
-                --disable-gnutls --disable-nettle --disable-gcrypt --disable-curl
-                --disable-libssh --disable-capstone --disable-zstd --disable-png
-                --disable-lzo --disable-snappy --disable-bzip2 --disable-libnfs
-                --disable-libiscsi --disable-curses --disable-gettext
-            )
-            CROSS_FLAGS=(
-                --cross-prefix=
-                --cpu="${MAC_CPU}"
-                --cc="${CC_MAC}"
-                --cxx="clang++ -arch ${MAC_ARCH}"
-                --objcc="${CC_MAC}"
-                --extra-ldflags="${MAC_MIN}"
-            )
-        fi
-        ;;
-    Linux)
-        HOST_FLAGS=(--enable-kvm --enable-pipewire)
-        ;;
-    Windows|WindowsCross)
-        EXE=".exe"
-        EXTRA_WARN_FLAGS=" -Wno-error"
-        HOST_FLAGS=(--enable-slirp)
-        if [ "${WIN_ARCH}" = "aarch64" ]; then
-            HOST_FLAGS+=(--enable-whpx)
-        else
-            HOST_FLAGS+=(--disable-whpx)
-        fi
-        if [ "${HOST_OS}" = "WindowsCross" ]; then
-            triple="${WIN_ARCH}-w64-mingw32"
-            WIN_DEPS="/opt/llvm-mingw/${triple}"
-            export PKG_CONFIG=pkg-config
-            export PKG_CONFIG_LIBDIR="${WIN_DEPS}/lib/pkgconfig:${WIN_DEPS}/share/pkgconfig"
-            CROSS_FLAGS=(
-                --cross-prefix="${triple}-"
-                --cc="${triple}-clang"
-                --cxx="${triple}-clang++"
-            )
-        fi
-        ;;
-    *)
-        echo "ERROR: unsupported build host: ${HOST_OS}" >&2
-        exit 1
-        ;;
-esac
-
 if [ ! -f "${BUILD_DIR}/build.ninja" ]; then
-    echo "==> Configuring for ${HOST_OS} …"
+    echo "==> Configuring …"
     # configure must be invoked from the build directory:
     # it runs `meson setup "$PWD" "$source_path"` internally.
     (
         cd "${BUILD_DIR}"
+        # QEMU's bundled pip/meson bootstrap breaks under Python 3.14 (the
+        # Homebrew default). Prefer a 3.11/3.12; override with QEMU_PYTHON.
+        # The fallback list is fixed; extend it if a host lacks all three.
+        QEMU_PYTHON="${QEMU_PYTHON:-$(command -v python3.12 || command -v python3.11 || command -v python3)}"
         "${SRC_DIR}/configure" \
+            --python="${QEMU_PYTHON}"   \
             --prefix="${INSTALL_DIR}"   \
             --target-list=aarch64-softmmu \
-            "${HOST_FLAGS[@]}"          \
-            ${CROSS_FLAGS[@]+"${CROSS_FLAGS[@]}"} \
+            --enable-hvf                \
+            --enable-cocoa              \
             --disable-gtk               \
             --disable-sdl               \
             --disable-curses            \
             --disable-vnc               \
             --disable-fuse              \
+            --disable-pvg               \
+            --disable-dbus-display      \
             --disable-docs              \
             --disable-guest-agent       \
             --disable-plugins           \
             --enable-tools              \
             --disable-install-blobs     \
             --enable-trace-backends=nop \
+            --enable-slirp              \
             --disable-werror            \
-            --extra-cflags="-O2${EXTRA_WARN_FLAGS}"
+            --extra-cflags="-O2"
     )
 else
-    echo "==> The build is already configured; skipping configure"
+    echo "==> Build already configured - skipping configure"
 fi
 
 # --------------------------------------------------------------------------
@@ -359,216 +168,28 @@ JOBS="${JOBS:-$(sysctl -n hw.logicalcpu 2>/dev/null || nproc)}"
 echo "==> Building with ${JOBS} jobs …"
 # `--enable-tools` configures a fleet of small helper tools (qemu-img,
 # qemu-io, qemu-nbd, qemu-storage-daemon, qemu-edid, elf2dmp,
-# ivshmem-client, ivshmem-server) for install; `meson install` aborts if any
-# of them is missing, so they are built even though only qemu-img ships.
-#
-# Which of them exist depends on the host (elf2dmp is not a target on Linux,
-# qemu-bridge-helper is Linux-only, qemu-keymap needs xkbcommon), so the union
-# is listed and intersected with the targets ninja knows.
-WANTED=(
-    qemu-system-aarch64
-    qemu-img qemu-io qemu-nbd storage-daemon/qemu-storage-daemon
-    qemu-edid contrib/elf2dmp/elf2dmp
-    contrib/ivshmem-client/ivshmem-client
+# ivshmem-client, ivshmem-server) for install; `meson install` aborts if
+# any of them is missing, so build them all even though the .app only
+# ships qemu-img.  They link fast, so the extra ninja work is negligible.
+ninja -C "${BUILD_DIR}" -j"${JOBS}" \
+    qemu-system-aarch64 \
+    qemu-img qemu-io qemu-nbd storage-daemon/qemu-storage-daemon \
+    qemu-edid contrib/elf2dmp/elf2dmp \
+    contrib/ivshmem-client/ivshmem-client \
     contrib/ivshmem-server/ivshmem-server
-    qemu-bridge-helper qemu-pr-helper qemu-vmsr-helper
-    qemu-keymap
-)
-# Whole directories of generated data that meson installs, named by prefix
-# because there are dozens of them and no alias that builds the set: the
-# keymaps exist only where qemu-keymap does, which is where xkbcommon does.
-WANTED_UNDER=( pc-bios/keymaps/ )
 
-# A patch or a changed meson.build makes ninja reconfigure; list the targets
-# after that, not before.
-ninja -C "${BUILD_DIR}" build.ninja
-KNOWN="$(ninja -C "${BUILD_DIR}" -t targets all | cut -d: -f1)"
-declare -a TARGETS
-for t in "${WANTED[@]}"; do
-    if grep -qxF "${t}${EXE}" <<<"${KNOWN}"; then
-        TARGETS+=("${t}${EXE}")
-    else
-        echo "    (skipping ${t}: it is not a target on this host)"
-    fi
-done
-for prefix in "${WANTED_UNDER[@]}"; do
-    # A read loop, not mapfile: macOS ships bash 3.2.
-    under=()
-    while IFS= read -r t; do
-        under+=("${t}")
-    done < <(grep "^${prefix}" <<<"${KNOWN}" || true)
-    if [[ ${#under[@]} -gt 0 ]]; then
-        TARGETS+=("${under[@]}")
-        echo "    (${#under[@]} targets under ${prefix})"
-    fi
-done
 
-ninja -C "${BUILD_DIR}" -j"${JOBS}" "${TARGETS[@]}"
 
 # --------------------------------------------------------------------------
 # 5. Install
 # --------------------------------------------------------------------------
 
 echo "==> Installing …"
-# Install with meson install --no-rebuild. `ninja install` also builds test
-# binaries such as tests/audio/test-audio, which do not link virtio-snd.c.o
-# and cannot resolve the coreaudio.m bypass symbols. Meson is in the build
-# directory's pyvenv.
-# The venv keeps its scripts in bin/ or, for a native Windows Python, Scripts/.
-MESON=""
-for m in "${BUILD_DIR}/pyvenv/bin/meson" "${BUILD_DIR}/pyvenv/Scripts/meson.exe" \
-         "${BUILD_DIR}/pyvenv/Scripts/meson"; do
-    if [ -x "${m}" ]; then MESON="${m}"; break; fi
-done
-if [ -z "${MESON}" ]; then
-    echo "ERROR: no meson in ${BUILD_DIR}/pyvenv" >&2
-    exit 1
-fi
-INSTALL_OPTS=(--no-rebuild)
-if [ -n "${WIN_ARCH}" ]; then
-    INSTALL_OPTS+=(--strip)
-fi
-"${MESON}" install -C "${BUILD_DIR}" "${INSTALL_OPTS[@]}"
-
-# Windows installs into the prefix itself, with no bin/.
-if [ -n "${WIN_ARCH}" ]; then
-    QEMU_BIN_DIR="${INSTALL_DIR}"
-else
-    QEMU_BIN_DIR="${INSTALL_DIR}/bin"
-fi
-echo ""
-echo "Done. Binary at: ${QEMU_BIN_DIR}/qemu-system-aarch64${EXE}"
-
-# --------------------------------------------------------------------------
-# 6. Build embedding dylib (libcdj3k-emu-qemu.dylib)
-# --------------------------------------------------------------------------
-#
-# The dylib uses the binary's object files and link flags, linked with
-# -dynamiclib. cdj3k_emu_shim.c replaces main(), and Mach-O interposing
-# catches exit() so that cdj3k_emu_qemu_run() can return.
-# crates/cdj3k-emu-runtime calls it through FFI.
-
-# The rest is host-specific. On Windows, the DLLs that the binaries load are
-# copied beside them. On Linux, the installed binary ships as is. On macOS,
-# QEMU is linked into libcdj3k-emu-qemu.dylib, which the app loads, so a slot
-# launch runs the app again instead of a second binary.
-if [ -n "${WIN_ARCH}" ]; then
-    # Windows looks for a DLL beside the executable first, so every DLL the
-    # binaries load goes into the directory they are in.
-    echo "==> Collecting DLLs …"
-    if [ "${HOST_OS}" = "WindowsCross" ]; then
-        DLL_DIRS=("${WIN_DEPS}/bin")
-    else
-        DLL_DIRS=("${MSYSTEM_PREFIX}/bin")
-    fi
-    bash "${REPO_ROOT}/scripts/bundle-dlls.sh" "${QEMU_BIN_DIR}" "${DLL_DIRS[@]}" -- \
-        "${QEMU_BIN_DIR}/qemu-system-aarch64.exe" "${QEMU_BIN_DIR}/qemu-img.exe"
-    cp "${SRC_DIR}/COPYING" "${QEMU_BIN_DIR}/COPYING"
-    # libfdt's headers and static library, the tools other than qemu-img, and
-    # share/ (keymaps, icons, other machines' device trees) are not part of the
-    # tree that ships.
-    rm -rf "${QEMU_BIN_DIR}/include" "${QEMU_BIN_DIR}/lib" "${QEMU_BIN_DIR}/share"
-    rm -f "${QEMU_BIN_DIR}"/qemu-{edid,io,nbd,storage-daemon}.exe
-    echo ""
-    echo "Done. ${QEMU_BIN_DIR} holds qemu-system-aarch64.exe and its DLLs."
-    exit 0
-fi
-
-if [ "${HOST_OS}" != "Darwin" ]; then
-    echo ""
-    echo "Done. ${HOST_OS} ships the binary as is and needs no embedding library."
-    exit 0
-fi
-
-echo "==> Building libcdj3k-emu-qemu.dylib …"
-
-SHIM_SRC="${SHIM_DIR}/cdj3k_emu_shim.c"
-SHIM_OBJ="${BUILD_DIR}/cdj3k_emu_shim.o"
-DYLIB_OUT="${INSTALL_DIR}/lib/libcdj3k-emu-qemu.dylib"
-
-# Use the include paths of QEMU's own build (the -I flags in build.ninja).
-QEMU_CFLAGS="-O2 -I${BUILD_DIR} -I${SRC_DIR} -I${BUILD_DIR}/qapi -I${BUILD_DIR}/trace -I${BUILD_DIR}/ui"
-
-# A slice build compiles and links for its arch at the deployment target.
-DYLIB_CC="${CC_MAC:-cc} ${MAC_MIN:-}"
-
-${DYLIB_CC} ${QEMU_CFLAGS} -c -o "${SHIM_OBJ}" "${SHIM_SRC}"
-echo "  shim compiled: ${SHIM_OBJ}"
-
-# Read the object-file list and LINK_ARGS from build.ninja and link them again
-# as a dylib.
-NINJA="${BUILD_DIR}/build.ninja"
-
-# 1. The (objc_|c_)LINKER build rule line. Prefer the unsigned target (some
-#    configs skip the signing step). coreaudio.m in the direct link makes it
-#    objc_LINKER. The line can be 50 KB+; awk handles it.
-BUILD_LINE=$(awk '
-    /^build qemu-system-aarch64-unsigned: (objc_|c_)LINKER / { print; found=1; exit }
-    END { if (!found) exit 1 }
-' "${NINJA}" || awk '
-    /^build qemu-system-aarch64: (objc_|c_)LINKER / { print; exit }
-' "${NINJA}")
-if [ -z "${BUILD_LINE}" ]; then
-    echo "ERROR: no (objc_|c_)LINKER rule for qemu-system-aarch64 in ${NINJA}" >&2
-    exit 1
-fi
-
-# 2. The object and archive inputs are the tokens after the linker name that
-#    end in .o or .a. Relative paths are resolved against BUILD_DIR.
-#    libcurl.a is replaced with libcurl.dylib, so that the dylib link does not
-#    pull in its static dependencies (ngtcp2, nghttp3, ICU).
-declare -a OBJS
-seen_linker=0
-for tok in ${BUILD_LINE}; do
-    if [ "${seen_linker}" -eq 0 ]; then
-        case "${tok}" in
-            c_LINKER|objc_LINKER) seen_linker=1 ;;
-        esac
-        continue
-    fi
-    case "${tok}" in
-        -*)         continue ;;
-        *.o|*.a)    : ;;
-        *)          continue ;;
-    esac
-    case "${tok}" in
-        /*) full="${tok}" ;;
-        *)  full="${BUILD_DIR}/${tok}" ;;
-    esac
-    [ -e "${full}" ] || continue
-    if [ "$(basename "${full}")" = "libcurl.a" ]; then
-        dylib="${full%/libcurl.a}/libcurl.dylib"
-        [ -e "${dylib}" ] && full="${dylib}"
-    fi
-    OBJS+=("${full}")
-done
-
-# 3. The indented LINK_ARGS line that follows the build rule.
-LINK_ARGS=$(awk '
-    /^build qemu-system-aarch64(-unsigned)?: (objc_|c_)LINKER / { found=1; next }
-    found && /^ +LINK_ARGS = / {
-        sub(/^ +LINK_ARGS = /, "")
-        print
-        exit
-    }
-    found && /^[a-zA-Z]/ { exit }   # left the build rule block
-' "${NINJA}")
-
-# Drop the executable's symbol-export options (-Wl,-exported_symbols_list and
-# the @*.syms response files); they do not apply to the dylib.
-LINK_ARGS=$(printf '%s' "${LINK_ARGS}" \
-    | sed -E 's/-Wl,-exported_symbols_list,[^ ]+//g; s/@[^ ]+\.syms//g; s/  +/ /g')
-
-echo "  linking ${#OBJS[@]} objects into ${DYLIB_OUT}"
-(
-    cd "${BUILD_DIR}"
-    ${DYLIB_CC} -dynamiclib \
-       -install_name @rpath/libcdj3k-emu-qemu.dylib \
-       -o "${DYLIB_OUT}" \
-       "${SHIM_OBJ}" \
-       "${OBJS[@]}" \
-       ${LINK_ARGS}
-)
+# Use meson install --no-rebuild instead of `ninja install` - the latter
+# pulls in test binaries (e.g. tests/audio/test-audio) that don't link
+# virtio-snd.c.o and therefore can't resolve our coreaudio.m bypass refs.
+# Meson is bundled inside the build dir's pyvenv (no system meson).
+"${BUILD_DIR}/pyvenv/bin/meson" install -C "${BUILD_DIR}" --no-rebuild
 
 echo ""
-echo "Dylib at: ${DYLIB_OUT}"
+echo "Done. Binary at: ${INSTALL_DIR}/bin/qemu-system-aarch64"

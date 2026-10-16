@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/ui/meson.build b/ui/meson.build
 index ceaf110..faf7d95 100644
 --- a/ui/meson.build

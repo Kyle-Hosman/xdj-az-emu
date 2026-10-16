@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+diff --git a/audio/audio-be.c b/audio/audio-be.c
+index ee065fa..b9824bd 100644
+--- a/audio/audio-be.c
++++ b/audio/audio-be.c
+@@ -7,6 +7,8 @@
+ #include "trace.h"
+ #include "qapi-types-audio.h"
+ 
++#include "audio_int.h"
++
+ bool audio_be_check(AudioBackend **be, Error **errp)
+ {
+     assert(be != NULL);
+@@ -241,6 +243,18 @@ const char *audio_be_get_id(AudioBackend *be)
+     }
+ }
+ 
++bool audio_be_is_coreaudio(AudioBackend *be)
++{
++    AudioMixengBackend *s;
++
++    if (!be) {
++        return false;
++    }
++
++    s = AUDIO_MIXENG_BACKEND(be);
++    return s->dev && s->dev->driver == AUDIODEV_DRIVER_COREAUDIO;
++}
++
+ AudioBackend *audio_be_new(Audiodev *dev, Error **errp)
+ {
+     const char *drvname = AudiodevDriver_str(dev->driver);
+diff --git a/hw/audio/virtio-snd.c b/hw/audio/virtio-snd.c
+index cccf1e6..b9db3ac 100644
+--- a/hw/audio/virtio-snd.c
++++ b/hw/audio/virtio-snd.c
+@@ -1410,11 +1410,18 @@ static uint32_t virtio_snd_pcm_prepare(VirtIOSound *s, uint32_t stream_id)
+          * Hermite) off the BQL when the guest and HAL rates differ, so the
+          * real-time callback takes no lock. QEMU's AUD_write mixer carries
+          * the stream when the bypass is not ready.
++         *
++         * The bypass ring is drained exclusively by the CoreAudio IOProc,
++         * so it must stay inactive for any other backend (e.g. the wav
++         * audiodev); otherwise TX buffers never return and no PCM ever
++         * reaches the backend. Non-CoreAudio backends take the normal
++         * AUD_write/mixeng path.
+          */
+         bool bypass_ok = (as.nchannels == 2 &&
+                           (as.fmt == AUDIO_FORMAT_F32 ||
+                            as.fmt == AUDIO_FORMAT_S32) &&
+-                          host_audio_bypass_ready());
++                          host_audio_bypass_ready()) &&
++                         audio_be_is_coreaudio(s->audio_be);
+         if (bypass_ok) {
+             vsnd_drain_target_dev = s;
+             virtio_snd_bypass_set_active(1, as.fmt, (uint32_t)as.freq);
+diff --git a/include/qemu/audio.h b/include/qemu/audio.h
+index cff8a33..eed6b47 100644
+--- a/include/qemu/audio.h
++++ b/include/qemu/audio.h
+@@ -175,6 +175,7 @@ void audio_help(void);
+ AudioBackend *audio_be_by_name(const char *name, Error **errp);
+ AudioBackend *audio_get_default_audio_be(Error **errp);
+ const char *audio_be_get_id(AudioBackend *be);
++bool audio_be_is_coreaudio(AudioBackend *be);
+ #ifdef CONFIG_GIO
+ bool audio_be_can_set_dbus_server(AudioBackend *be);
+ bool audio_be_set_dbus_server(AudioBackend *be,

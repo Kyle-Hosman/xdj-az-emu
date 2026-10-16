@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/drivers/block/virtio_blk.c b/drivers/block/virtio_blk.c
 index 65a1f15..de659cc 100644
 --- a/drivers/block/virtio_blk.c

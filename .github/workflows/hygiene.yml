@@ -1,0 +1,36 @@
+name: hygiene
+
+# Keeps personal names, dates, private paths and em dashes out of the repository: the
+# files on every push and pull request, and the messages of the commits a push or pull
+# request adds. The rules are in .public-hygiene.json.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scanner self-test
+        run: python3 tools/public-hygiene --self-test
+      - name: Files
+        run: python3 tools/public-hygiene .
+      - name: Commit messages
+        env:
+          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            range="$AFTER"            # a new branch: every commit it carries
+          else
+            range="$BEFORE..$AFTER"
+          fi
+          python3 tools/public-hygiene --commits "$range" .

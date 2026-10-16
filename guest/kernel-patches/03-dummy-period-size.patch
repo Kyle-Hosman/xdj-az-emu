@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/sound/drivers/dummy.c b/sound/drivers/dummy.c
 index 4317677ba..a3f94e8db 100644
 --- a/sound/drivers/dummy.c

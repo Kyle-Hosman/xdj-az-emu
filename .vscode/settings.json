@@ -1,7 +1,0 @@
-{
-  "files.associations": {
-    ".env": "ini",
-    "*.rs": "rust",
-    "errno.h": "c"
-  }
-}

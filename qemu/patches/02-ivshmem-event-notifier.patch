@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/util/event_notifier-posix.c b/util/event_notifier-posix.c
 index 83fdbb9..263dcbb 100644
 --- a/util/event_notifier-posix.c

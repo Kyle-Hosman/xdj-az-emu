@@ -6,13 +6,11 @@
 # testmode byte and write /tmp/testmode.  Without /tmp/testmode, apl_start.sh
 # prints "can't read /tmp/testmode" and exits without launching the app.
 #
-# subucom_virt.ko registers that device: /dev/subucom_spi1.0, or
-# /dev/subucom_spi3.0 for model=cdj1500x.
+# subucom_virt.ko registers that device, /dev/subucom_spi1.0.
 # This service must complete before pre-setting.service runs.
 set -euo pipefail
 : "${ROOTFS:?ROOTFS must be set by dispatcher}"
 : "${APP_UNIT:?APP_UNIT must be set by dispatcher}"
-: "${APP_SLUG:?APP_SLUG must be set by dispatcher}"
 
 SERVICE_DIR="$ROOTFS/etc/systemd/system"
 mkdir -p "$SERVICE_DIR"
@@ -28,7 +26,7 @@ Before=multi-user.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c 'TM=0; grep -qw subucom_testmode /proc/cmdline && TM=1; /sbin/insmod /lib/modules/subucom_virt.ko model=${APP_SLUG} inject_testmode=\$\$TM'
+ExecStart=/bin/sh -c 'TM=0; grep -qw subucom_testmode /proc/cmdline && TM=1; /sbin/insmod /lib/modules/subucom_virt.ko inject_testmode=\$\$TM'
 
 [Install]
 WantedBy=multi-user.target

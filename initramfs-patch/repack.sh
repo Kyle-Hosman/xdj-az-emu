@@ -13,7 +13,7 @@ set -eu
 #
 # Repack in Docker. The Python step below sets every UID and GID to 0,
 # because the virtiofs mount can expose the macOS UID. Run it with:
-#   docker run --rm -v "$(pwd)/build/initramfs-work":/work arm64v8/alpine:3.19 sh /work/repack.sh
+#   docker run --rm -v "$(pwd)/build/initramfs-work":/work alpine:3.19 sh /work/repack.sh
 if command -v apk >/dev/null 2>&1; then
     apk add -q --no-cache cpio python3 2>/dev/null || true
 elif command -v apt-get >/dev/null 2>&1; then

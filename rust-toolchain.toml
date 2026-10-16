@@ -1,5 +1,0 @@
-# Every build uses this toolchain: CI, the release packaging and the Windows
-# cross-build image (RUST_VERSION in docker/Dockerfile.windows-qemu).
-# Components and targets are added where they are needed.
-[toolchain]
-channel = "1.99.0"

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/system/main.c b/system/main.c
 index b8f7157..4255584 100644
 --- a/system/main.c

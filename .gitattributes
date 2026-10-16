@@ -1,3 +1,18 @@
-*.sh text eol=lf
-# Signed bytes: a line-end conversion breaks the signature.
-crates/cdj3k-emu-update/tests/fixtures/** -text
+# Line endings. Almost everything here runs in Linux: inside the guest, inside a
+# Docker container, or under bash. A checkout with core.autocrlf=true (common on
+# Windows) would otherwise turn these into CRLF and break them in confusing ways
+# ("$'\r': command not found", patches that do not apply). Force LF for all of it.
+# tools/check-lf.py fails loudly if a CRLF slips in anyway; build.sh runs it first.
+* text=auto eol=lf
+
+# Windows-only scripts are fine either way; keep them CRLF-friendly for PowerShell.
+*.ps1 text eol=crlf
+
+# Binary (none are committed today; listed so a future one is never mangled).
+*.png binary
+*.icns binary
+*.img binary
+*.gz binary
+*.cpio binary
+*.ko binary
+*.so binary

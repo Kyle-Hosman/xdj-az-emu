@@ -1,0 +1,59 @@
+{
+  "rules": {
+    "owner-name": [
+      "\\bkyle\\b",
+      "\\bhosman\\b",
+      "kylehosman"
+    ],
+    "narrative": [
+      "\\bas discussed\\b"
+    ],
+    "date": [
+      "\\b20[2-3]\\d-[01]\\d-[0-3]\\d\\b"
+    ],
+    "private-path": [
+      "/Users/",
+      "\\b[A-Z]:\\\\Users\\\\"
+    ],
+    "em-dash": [
+      "—"
+    ]
+  },
+  "allow_lines": {
+    "owner-name": [
+      "^\\s*(//|#|\\*)?\\s*Copyright \\(c\\) 20\\d\\d(-20\\d\\d)? Kyle Hosman\\b",
+      "github\\.com/Kyle-Hosman/[A-Za-z0-9._-]+",
+      "\\bKyle-Hosman/[A-Za-z0-9._-]+",
+      "\"(author|maintainer)\":\\s*\"Kyle-Hosman\"",
+      "Copyright \\(C\\) 20\\d\\d Kyle Hosman",
+      "Built by <a href=\"https://github\\.com/Kyle-Hosman\">Kyle Hosman</a>",
+      "io\\.github\\.kyle-hosman\\."
+    ],
+    "date": [
+      "\"20\\d\\d-\\d\\d-\\d\\d\"",
+      "\"updated\":",
+      "\\bUTC\\b",
+      "epoch|clock was never set",
+      "touch -d '20\\d\\d"
+    ]
+  },
+  "allow_files": {
+    "date": [
+      "CHANGELOG*",
+      "*/CHANGELOG*",
+      "*.minisig"
+    ]
+  },
+  "skip_files": [
+    "*.png",
+    "*.jpg",
+    "*.ico",
+    "*.icns",
+    "*.cov",
+    "*.delta",
+    "*.lock",
+    "package-lock.json",
+    "*/stb_vorbis.c",
+    "stb_vorbis.c"
+  ]
+}

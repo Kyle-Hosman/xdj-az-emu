@@ -1,61 +1,39 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 /*
- * cfgd.c - the guest config daemon for the cdj3k.cfg virtio-serial port.
+ * cfgd.c - guest-side config daemon for the cdj3k.cfg virtio-serial port.
  *
- * The port is one bidirectional channel between the guest and the cdj3k-emu
- * UI process. cfgd also exposes /sys/module/virtio_snd/parameters for live
- * tuning and pushes latency telemetry.
+ * Single bidirectional channel between the guest and the cdj3k-emu UI process.
+ * Replaces the old cdj3k.usbcmd + cdj3k.usbstate pair plus exposes
+ * /sys/module/virtio_snd/parameters for live tuning + latency telemetry.
  *
- * The protocol is line-based ASCII; each line ends in '\n'.
+ * Protocol (line-based, ASCII, '\n'-terminated):
  *
- *   Host to guest:
- *     usb attach              Run /usr/sbin/usb-external-attach.sh.
- *     usb detach              Notify EP122 through /proc/udev_usb1, then
- *                             lazily unmount /media/usb/sd*.
- *     set <name> <value>      Write <value> to an allowed sysfs parameter.
- *     get <name>              Answer with a `param` line.
- *     pc_link on|off          Start or stop cdj3k-pc-link-bridge.service, so
- *                             that the HID and MIDI endpoints of the gadget on
- *                             dummy_hcd start or stop forwarding over
- *                             cdj3k.usb-link. This emulates plugging or
- *                             unplugging the USB-B cable.
- *     mods status             Send the mods report.
- *     mods log <name>         Send a mod's journal for this boot.
- *     ping                    Answer with `pong`.
+ *   host → guest
+ *     usb attach              - invoke /usr/sbin/usb-external-attach.sh
+ *     usb detach              - signal EP122 via /proc/udev_usb1, then
+ *                               lazy-umount /media/usb/sd* and emit usb_state 0
+ *     set <name> <value>      - write <value> to a whitelisted sysfs param
+ *     get <name>              - emit a `param <name> <value>` response
  *
- *   Guest to host:
- *     usb_state <0|1>         Sent when a USB hook script signals cfgd with
- *                             SIGUSR1 or SIGUSR2 (see below).
- *     param <name> <value>    The answer to get or set. The value is `?` for
- *                             a parameter that is unknown or not writable, and
- *                             `!` when the read or write failed.
- *     pc_link <on|off>        The answer to pc_link; `on_failed` or
- *                             `off_failed` when systemctl failed, and `?` for
- *                             an unknown argument.
- *     latency <g>,<h>,<t>     Pushed every LATENCY_PERIOD_MS.
- *     mods off                This boot has no mods.
- *     mods pending            The mods runner has not finished.
- *     mods begin / mod <name> script <rc|timeout|none>
- *       libs <n> / mods end   The runner's report, one `mod` line per mod.
- *     log_begin <name> / log <name> <line>… / log_end <name>
- *                             The answer to `mods log`, once per request.
+ *   guest → host
+ *     usb_state <0|1>         - emitted by cfgd in response to SIGUSR1/SIGUSR2
+ *                               from the USB hook scripts (see below)
+ *     param <name> <value>    - response to get or unsolicited push
+ *     latency <g>,<h>,<t>     - pushed every LATENCY_PERIOD_MS
  *
- *   The mods report is sent when it changes (checked every
- *   LATENCY_PERIOD_MS) and on `mods status`, so a host that connects late
- *   gets it by asking once.
+ * Signal IPC from in-guest scripts:
  *
- * Signals from guest scripts:
+ *   The cfg virtio-serial port is single-opener on Linux - once cfgd holds
+ *   it `O_RDWR`, any other process trying to write gets EBUSY.  The USB
+ *   hook scripts therefore can't write directly; instead they signal cfgd
+ *   and cfgd does the emit:
  *
- *   Linux allows one opener per virtio-serial port, and cfgd holds the cfg
- *   port open O_RDWR, so another process that opens it gets EBUSY. The USB
- *   hook scripts therefore signal cfgd, and cfgd sends the line:
+ *     SIGUSR1  ->  emit("usb_state 0")   (guest-initiated eject)
+ *     SIGUSR2  ->  emit("usb_state 1")   (guest-initiated attach)
  *
- *     SIGUSR1   usb_state 0   (eject started in the guest)
- *     SIGUSR2   usb_state 1   (attach)
- *
- *   The scripts run, for example, `kill -USR1 $(pidof cdj3k-cfgd)`. The host
- *   acts only on the eject, because it already knows when it started an
- *   attach.
+ *   Scripts use `kill -USR1 $(pidof cdj3k-cfgd)` etc.  The host only acts
+ *   on the eject side (it already knows when it initiated an attach), but
+ *   both signals exist for symmetry.
  */
 
 #define _GNU_SOURCE
@@ -68,7 +46,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -80,12 +57,10 @@
 #define USB_ATTACH       "/usr/sbin/usb-external-attach.sh"
 #define SYSFS_DIR        "/sys/module/virtio_snd/parameters/"
 #define LATENCY_FILE     SYSFS_DIR "audio_latency_ms"
-#define MODS_MANIFEST    "/opt/cdj3k-mods/manifest"
-#define MODS_STATUS      "/run/cdj3k-mods/status"
-#define MODS_LOG_LINES   500
 
-/* The sysfs parameters that cfgd exposes. Any other name is rejected with
- * `param <name> ?`, so a host bug cannot write arbitrary kernel parameters. */
+/* Sysfs parameters cfgd is allowed to expose. Anything not listed here is
+ * rejected with `param <name> ?` so a host bug can't poke arbitrary kernel
+ * knobs. */
 struct param_def {
     const char *name;
     int writable;
@@ -93,7 +68,7 @@ struct param_def {
 static const struct param_def PARAMS[] = {
     { "audio_sync_enabled",  1 },
     { "link_pos_offset_ms",  1 },
-    { "audio_latency_ms",    0 },  /* Read-only; also pushed every 3 s as a latency line. */
+    { "audio_latency_ms",    0 },  /* read-only - also pushed every 3s */
 };
 #define N_PARAMS (sizeof(PARAMS) / sizeof(PARAMS[0]))
 
@@ -126,8 +101,7 @@ static int open_port_blocking(void)
     }
 }
 
-/* Write one line atomically; virtio-serial keeps a write of up to PIPE_BUF
- * bytes atomic. */
+/* Atomic line write. virtio-serial respects PIPE_BUF for atomicity. */
 static void emit(const char *fmt, ...)
 {
     if (g_port_fd < 0) return;
@@ -137,7 +111,6 @@ static void emit(const char *fmt, ...)
     int n = vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     if (n <= 0) return;
-    /* A line cut short to fit the buffer still ends in a newline. */
     if (n >= (int)sizeof(buf)) n = (int)sizeof(buf) - 1;
     if (buf[n - 1] != '\n') {
         if (n == (int)sizeof(buf) - 1) n--;
@@ -155,8 +128,8 @@ static const struct param_def *find_param(const char *name)
     return NULL;
 }
 
-/* Read a small sysfs file whole. On success, returns a malloc'd
- * NUL-terminated string without the trailing newline. */
+/* Read a sysfs file fully (small files only). On success returns a malloc'd
+ * NUL-terminated string with trailing newline stripped. */
 static char *read_sysfs(const char *name)
 {
     char path[256];
@@ -185,12 +158,12 @@ static int write_sysfs(const char *name, const char *value)
     return (w == (ssize_t)len) ? 0 : -1;
 }
 
-/* Tell EP122 through /proc/udev_usb1 that the USB drive is gone, so it
- * closes its fds, then lazily unmount every /media/usb/sd* mount point. This
- * matches what the hardware eject path produces. EP122 parses the
- * `umount /dev/sdb` line. The unbind script uses the same channel with a
- * mount path, but EP122 also accepts the device path, which is what the
- * host knows. */
+/* Tell EP122 the USB is gone via /proc/udev_usb1 (it reads this channel as
+ * IPC and closes its FDs in response), then lazy-unmount any /media/usb/sd*
+ * mount points.  Mirrors what the hardware eject path produces; the
+ * `umount /dev/sdb` line is what EP122 actually parses (the unbind script
+ * uses the same channel with a mount-path argument, but EP122 accepts the
+ * device-path form too and that's what the host knows). */
 static void detach_usb(void)
 {
     int fd = open("/proc/udev_usb1", O_WRONLY | O_CLOEXEC);
@@ -201,7 +174,7 @@ static void detach_usb(void)
         close(fd);
     }
 
-    /* Let EP122 close its files before the unmount. */
+    /* Let EP122 close its files before we umount. */
     struct timespec ts = { .tv_sec = 0, .tv_nsec = 150L * 1000 * 1000 };
     nanosleep(&ts, NULL);
 
@@ -238,11 +211,11 @@ static void handle_usb(const char *arg)
             waitpid(pid, &status, 0);
         }
     } else if (strcmp(arg, "detach") == 0) {
-        /* No `usb_state 0` is sent here: this path answers an eject that the
-         * host started, so the host already knows. Only an eject started in
-         * the guest, where the EP122 eject button runs unbind-usb-device.sh,
-         * needs to inform the host, and that script signals cfgd with
-         * SIGUSR1. */
+        /* No `usb_state 0` emit here: this path runs in response to a
+         * host-initiated eject, so the host already knows.  The
+         * guest-initiated path (EP122 button → unbind-usb-device.sh)
+         * is the only one that needs to inform the host, and it writes
+         * `usb_state 0` to cdj3k.cfg itself. */
         detach_usb();
     }
 }
@@ -274,39 +247,6 @@ static void handle_set(const char *args)
     }
 }
 
-/* Start or stop the PC Link bridge service. cfgd forks and execs systemctl,
- * so the service gets its credentials and capabilities from systemd. The
- * bridge unit has no [Install] section, so only a host toggle starts it. The
- * result goes back over the cfg port, so the host UI can show whether the
- * cable is connected without polling. */
-static void handle_pc_link(const char *arg)
-{
-    const char *action;
-    if (strcmp(arg, "on") == 0)        action = "start";
-    else if (strcmp(arg, "off") == 0)  action = "stop";
-    else {
-        emit("pc_link ?");
-        return;
-    }
-    pid_t pid = fork();
-    if (pid < 0) {
-        emit("pc_link %s_failed", arg);
-        return;
-    }
-    if (pid == 0) {
-        execl("/bin/systemctl", "systemctl", action,
-              "cdj3k-pc-link-bridge.service", (char *)NULL);
-        _exit(127);
-    }
-    int status = 0;
-    waitpid(pid, &status, 0);
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-        emit("pc_link %s", arg);
-    } else {
-        emit("pc_link %s_failed", arg);
-    }
-}
-
 static void handle_get(const char *name)
 {
     const struct param_def *p = find_param(name);
@@ -323,115 +263,9 @@ static void handle_get(const char *name)
     }
 }
 
-/* ---- mods ---------------------------------------------------------------- */
-
-/* The state last sent, so that each tick sends only a change. */
-static struct timespec g_mods_mtime;
-static int g_mods_state = -1;   /* 0 off, 1 pending, 2 report */
-
-static int mods_state(struct stat *st)
-{
-    if (access(MODS_MANIFEST, F_OK) != 0) return 0;
-    if (stat(MODS_STATUS, st) != 0) return 1;
-    return 2;
-}
-
-static void emit_mods(void)
-{
-    struct stat st = {0};
-    int state = mods_state(&st);
-    g_mods_state = state;
-    g_mods_mtime = st.st_mtim;
-    if (state == 0) { emit("mods off"); return; }
-    if (state == 1) { emit("mods pending"); return; }
-    FILE *fp = fopen(MODS_STATUS, "r");
-    if (!fp) { emit("mods pending"); return; }
-    emit("mods begin");
-    char line[400];
-    int whole = 1;
-    while (fgets(line, sizeof(line), fp)) {
-        /* A line longer than the buffer is skipped entirely. */
-        int ends = strchr(line, '\n') != NULL || feof(fp);
-        line[strcspn(line, "\n")] = '\0';
-        if (whole && ends && strncmp(line, "mod ", 4) == 0) emit("%s", line);
-        whole = ends;
-    }
-    fclose(fp);
-    emit("mods end");
-}
-
-/* Send the mods report if it changed since it was last sent. */
-static void poll_mods(void)
-{
-    struct stat st = {0};
-    int state = mods_state(&st);
-    if (state != g_mods_state ||
-        st.st_mtim.tv_sec != g_mods_mtime.tv_sec ||
-        st.st_mtim.tv_nsec != g_mods_mtime.tv_nsec) {
-        emit_mods();
-    }
-}
-
-static int valid_mod_name(const char *name)
-{
-    if (!*name || strlen(name) > 64) return 0;
-    for (const char *c = name; *c; c++) {
-        if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') ||
-              *c == '.' || *c == '_' || *c == '-')) return 0;
-    }
-    return 1;
-}
-
-/* The journal of the mod's unit for this boot, followed by the runner's
- * lines about the mod. */
-static void emit_mod_log(const char *name)
-{
-    if (!valid_mod_name(name)) {
-        emit("log_begin %.64s", name);
-        emit("log_end %.64s", name);
-        return;
-    }
-    emit("log_begin %s", name);
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd),
-             "echo '-- journalctl -u cdj3k-mod-%s.service, this boot --';"
-             "journalctl -b -o cat --no-pager -u cdj3k-mod-%s.service | tail -n %d;"
-             "echo '-- cdj3k-mods.service --';"
-             "journalctl -b -o cat --no-pager -u cdj3k-mods.service"
-             " | awk -v p='%s: ' 'index($0, p) == 1 { print substr($0, length(p) + 1) }'",
-             name, name, MODS_LOG_LINES - 20, name);
-    FILE *fp = popen(cmd, "r");
-    if (fp) {
-        char line[400];
-        while (fgets(line, sizeof(line), fp)) {
-            size_t len = strcspn(line, "\n");
-            int whole = line[len] == '\n' || feof(fp);
-            line[len] = '\0';
-            /* A line longer than the buffer is sent truncated with "..."
-             * appended, and the rest of that line is skipped. */
-            emit(whole ? "log %s %s" : "log %s %s...", name, line);
-            if (!whole) {
-                int c;
-                while ((c = fgetc(fp)) != EOF && c != '\n') {
-                }
-            }
-        }
-        pclose(fp);
-    }
-    emit("log_end %s", name);
-}
-
-static void handle_mods(const char *arg)
-{
-    if (strcmp(arg, "status") == 0) {
-        emit_mods();
-    } else if (strncmp(arg, "log ", 4) == 0) {
-        emit_mod_log(arg + 4);
-    }
-}
-
 static void dispatch_line(char *line)
 {
+    /* Strip trailing whitespace. */
     size_t n = strlen(line);
     while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r' ||
                      line[n - 1] == ' ' || line[n - 1] == '\t')) {
@@ -439,9 +273,9 @@ static void dispatch_line(char *line)
     }
     if (n == 0) return;
 
-    /* Ignore the lines that cfgd itself sends (usb_state, param, latency).
-     * The kernel does not loop them back on the O_RDWR port; this check is a
-     * safeguard. */
+    /* Echo passthrough lines (anything emitted by the USB hook scripts):
+     * we receive our own "usb_state 1" frames because the port is RDWR
+     * and the kernel loops back nothing - but defensive guard anyway. */
     if (strncmp(line, "usb_state ", 10) == 0) return;
     if (strncmp(line, "param ", 6) == 0) return;
     if (strncmp(line, "latency ", 8) == 0) return;
@@ -452,14 +286,10 @@ static void dispatch_line(char *line)
         handle_set(line + 4);
     } else if (strncmp(line, "get ", 4) == 0) {
         handle_get(line + 4);
-    } else if (strncmp(line, "pc_link ", 8) == 0) {
-        handle_pc_link(line + 8);
-    } else if (strncmp(line, "mods ", 5) == 0) {
-        handle_mods(line + 5);
     } else if (strcmp(line, "ping") == 0) {
         emit("pong");
     } else {
-        fprintf(stderr, "cfgd: ignoring the unknown command '%s'\n", line);
+        fprintf(stderr, "cfgd: unknown command '%s'\n", line);
     }
 }
 
@@ -485,7 +315,7 @@ int main(void)
     fprintf(stderr, "cfgd: connected to /dev/virtio-ports/%s (fd %d)\n",
             VPORT_NAME, g_port_fd);
 
-    /* Push the initial state so the host does not have to ask for it. */
+    /* Initial state push so the host doesn't have to query immediately. */
     push_latency();
 
     char rx[1024];
@@ -493,9 +323,9 @@ int main(void)
     long next_push = now_ms() + LATENCY_PERIOD_MS;
 
     while (!g_stop) {
-        /* Send the lines that the signal handlers requested before blocking
-         * in poll(). SIGUSR1 and SIGUSR2 interrupt poll() with EINTR, and the
-         * EINTR branch continues the loop back to this point. */
+        /* Drain signal-driven emit flags before blocking on poll().  Signals
+         * (SIGUSR1/SIGUSR2) interrupt poll() with EINTR, the existing handler
+         * does `continue`, which loops back here. */
         if (g_emit_state_0) { g_emit_state_0 = 0; emit("usb_state 0"); }
         if (g_emit_state_1) { g_emit_state_1 = 0; emit("usb_state 1"); }
 
@@ -512,7 +342,7 @@ int main(void)
         if (pr > 0 && (pfd.revents & POLLIN)) {
             ssize_t r = read(g_port_fd, rx + rx_n, sizeof(rx) - rx_n - 1);
             if (r <= 0) {
-                /* The port reached EOF or disconnected; reopen it. */
+                /* EOF / disconnect - reopen. */
                 close(g_port_fd);
                 g_port_fd = open_port_blocking();
                 rx_n = 0;
@@ -521,6 +351,7 @@ int main(void)
             rx_n += (size_t)r;
             rx[rx_n] = '\0';
 
+            /* Split on '\n'. */
             char *start = rx;
             char *nl;
             while ((nl = strchr(start, '\n')) != NULL) {
@@ -528,22 +359,22 @@ int main(void)
                 dispatch_line(start);
                 start = nl + 1;
             }
+            /* Move remainder. */
             size_t rem = rx_n - (size_t)(start - rx);
             memmove(rx, start, rem);
             rx_n = rem;
-            /* When malformed input fills the buffer without a newline,
-             * discard the buffer and log it, so a misbehaving sender can be
-             * diagnosed. */
+            /* Hard reset on overflow (malformed input).  Log so the host
+             * sees we discarded data instead of silently corrupting the
+             * stream - a misbehaving sender is rare but worth diagnosing. */
             if (rx_n >= sizeof(rx) - 1) {
                 fprintf(stderr,
-                        "cfgd: the receive buffer overflowed (%zu bytes); discarding it\n",
+                        "cfgd: rx buffer overflow (%zu bytes), discarding\n",
                         rx_n);
                 rx_n = 0;
             }
         }
         if (now_ms() >= next_push) {
             push_latency();
-            poll_mods();
             next_push = now_ms() + LATENCY_PERIOD_MS;
         }
     }

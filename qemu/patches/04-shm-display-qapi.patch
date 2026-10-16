@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/qapi/ui.json b/qapi/ui.json
 index b2c42a7..ec7bdf9 100644
 --- a/qapi/ui.json

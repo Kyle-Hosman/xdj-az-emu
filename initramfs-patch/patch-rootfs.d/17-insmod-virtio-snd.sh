@@ -12,15 +12,6 @@ set -euo pipefail
 SERVICE_DIR="$ROOTFS/etc/systemd/system"
 mkdir -p "$SERVICE_DIR"
 
-# The ALSA period comes from the kernel command line (cdj3k.snd_period=N), so
-# the host picks it per boot without reprovisioning.
-cat > "$ROOTFS/usr/sbin/cdj3k-insmod-snd" << 'SHEOF'
-#!/bin/sh
-period=$(sed -n 's/.*cdj3k\.snd_period=\([0-9]*\).*/\1/p' /proc/cmdline)
-exec /sbin/insmod /lib/modules/virtio_snd.ko ${period:+period_frames=$period}
-SHEOF
-chmod 755 "$ROOTFS/usr/sbin/cdj3k-insmod-snd"
-
 cat > "$SERVICE_DIR/insmod-virtio-snd.service" << SVCEOF
 [Unit]
 Description=Load virtio_snd.ko, the virtio-sound PCM playback driver (host audio through QEMU)
@@ -32,7 +23,7 @@ After=insmod-virtio-rng.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/cdj3k-insmod-snd
+ExecStart=/sbin/insmod /lib/modules/virtio_snd.ko
 
 [Install]
 WantedBy=multi-user.target

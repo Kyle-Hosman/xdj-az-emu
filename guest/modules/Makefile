@@ -1,10 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # guest/modules/Makefile - build kernel modules inside Docker
 #
 # Builds the out-of-tree kernel modules for the Pioneer EP122 aarch64 guest:
 #   subucom_virt.ko, virtio_snd.ko, udev_usb1.ko
 #
 # Usage:
-#   make docker       - runs docker/Dockerfile and writes the modules to build/docker-out/modules/
+#   make docker       - run docker/Dockerfile, outputs to build/docker-out/modules/
 
 REPO_ROOT := $(shell git -C $(CURDIR) rev-parse --show-toplevel)
 

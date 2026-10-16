@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/hw/misc/Kconfig b/hw/misc/Kconfig
 index 99bdf09..1496b59 100644
 --- a/hw/misc/Kconfig

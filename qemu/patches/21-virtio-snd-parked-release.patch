@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 diff --git a/hw/audio/virtio-snd.c b/hw/audio/virtio-snd.c
 index 70f4d85..a3fb2c3 100644
 --- a/hw/audio/virtio-snd.c

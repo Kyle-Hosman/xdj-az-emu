@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""public-hygiene: keep personal names, dates, private paths and em dashes out of a
+public tree and its commit messages.
+
+Usage:
+    public-hygiene [--config FILE] [--commits RANGE] [PATH]
+    public-hygiene --self-test
+
+Scans the files git tracks under PATH (default: the current directory), or every file
+under PATH when it is not in a git repository. With
+--commits, also scans the messages of the commits RANGE selects: one or more git log
+arguments separated by spaces (e.g. "origin/main..HEAD" or "<sha> --not --remotes").
+Each finding is printed as `file:line: rule: text`; the exit status is 1 if any rule
+matched, 0 if the tree is clean, 2 on a usage or configuration error.
+
+The rules live in a JSON config (default: .public-hygiene.json at the repository
+root; --config FILE runs another rule set over the same tree), so the same script
+serves every repository:
+
+    {
+      "rules":       {"<rule>": ["<regex>", ...]},
+      "allow_lines": {"<rule>": ["<regex>", ...]},   a matching line is exempt
+      "allow_files": {"<rule>": ["<glob>", ...]},    a matching path is exempt
+      "skip_files":  ["<glob>", ...]                 never scanned (binaries, vendored code)
+    }
+
+Regexes are case-insensitive. The config file and this script are never scanned
+(they have to name what they look for). There is no inline "ignore this line"
+marker: every exception is made in the config, where review sees it.
+"""
+import fnmatch
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+BINARY_SNIFF = 4096
+SELF_NAMES = ("public-hygiene", "public-hygiene.py", ".public-hygiene.json")
+
+
+def load_config(path):
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    rules = {name: [re.compile(p, re.I) for p in pats] for name, pats in cfg.get("rules", {}).items()}
+    if not rules:
+        raise ValueError(f"{path}: no rules")
+    allow_lines = {name: [re.compile(p, re.I) for p in pats]
+                   for name, pats in cfg.get("allow_lines", {}).items()}
+    return rules, allow_lines, cfg.get("allow_files", {}), cfg.get("skip_files", [])
+
+
+def tracked_files(root):
+    """The files git tracks under root; every file under it when root is not in a git
+    repository (an exported tree, for example)."""
+    out = subprocess.run(["git", "-C", root, "ls-files", "-z"], capture_output=True)
+    if out.returncode == 0:
+        return [p for p in out.stdout.decode("utf-8", "replace").split("\0") if p]
+    files = []
+    for top, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        files += [os.path.relpath(os.path.join(top, n), root) for n in names]
+    return sorted(files)
+
+
+def matches_glob(path, globs):
+    return any(fnmatch.fnmatch(path, g) for g in globs)
+
+
+def scan_text(label, lines, cfg, findings):
+    rules, allow_lines, allow_files, _ = cfg
+    for n, line in enumerate(lines, 1):
+        for rule, pats in rules.items():
+            if matches_glob(label, allow_files.get(rule, [])):
+                continue
+            if not any(p.search(line) for p in pats):
+                continue
+            if any(a.search(line) for a in allow_lines.get(rule, [])):
+                continue
+            findings.append(f"{label}:{n}: {rule}: {line.strip()[:160]}")
+
+
+def scan_tree(root, cfg, commits=None):
+    skip = cfg[3]
+    findings = []
+    for rel in tracked_files(root):
+        if os.path.basename(rel) in SELF_NAMES or matches_glob(rel, skip):
+            continue
+        path = os.path.join(root, rel)
+        if not os.path.isfile(path):
+            continue
+        with open(path, "rb") as f:
+            data = f.read()
+        if b"\0" in data[:BINARY_SNIFF]:
+            continue
+        scan_text(rel, data.decode("utf-8", "replace").splitlines(), cfg, findings)
+    if commits:
+        # RANGE is one or more git log arguments separated by spaces, e.g.
+        # "origin/main..HEAD" or "<sha> --not --remotes".
+        log = subprocess.run(["git", "-C", root, "log", "--format=%H%n%B%x1e", *commits.split()],
+                             capture_output=True, check=True).stdout.decode("utf-8", "replace")
+        for entry in log.split("\x1e"):
+            entry = entry.strip("\n")
+            if entry:
+                sha, _, body = entry.partition("\n")
+                scan_text(f"commit {sha[:10]}", body.splitlines(), cfg, findings)
+    return findings
+
+
+# ---- self-test ---------------------------------------------------------------------------
+# A config of the same shape as a real one, with neutral stand-in terms, and fixtures each
+# rule must catch beside near misses each rule must let through.
+SELFTEST_CONFIG = {
+    "rules": {
+        "personal-name": [r"\bjanedoe\b", r"\bjane\b"],
+        "narrative": [r"\bper the reviewer\b", r"\bas discussed\b"],
+        "date": [r"\b20\d\d-\d\d-\d\d\b"],
+        "private-path": [r"/Users/", r"\binternal-repo\b"],
+    },
+    "allow_lines": {"personal-name": [r"^Copyright \(c\) \d{4} Jane Doe$", r"github\.com/janedoe/"]},
+    "allow_files": {"date": ["CHANGELOG.md"]},
+    "skip_files": ["vendor/*"],
+}
+SELFTEST_FILES = {
+    "src/a.c": "/* fixed after jane noticed the flicker */\n",
+    "src/b.c": "/* as discussed: keep the knob step at 1 */\n",
+    "src/c.c": "/* reworked 2026-10-12 */\n",
+    "src/d.py": "ROOT = '/Users/someone/work'\n",
+    "docs/e.md": "Built from internal-repo at the time.\n",
+    "LICENSE": "Copyright (c) 2026 Jane Doe\n",
+    "README.md": "Source: https://github.com/janedoe/project\n",
+    "CHANGELOG.md": "## 1.2.3 (2026-10-13)\n",
+    "src/f.c": "int handoff(const char *id); /* hands the screen to a program */\n",
+    "vendor/g.c": "/* jane 2026-01-01 /Users/x */\n",
+}
+SELFTEST_EXPECT = {
+    "src/a.c": "personal-name",
+    "src/b.c": "narrative",
+    "src/c.c": "date",
+    "src/d.py": "private-path",
+    "docs/e.md": "private-path",
+}
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as root:
+        for rel, text in SELFTEST_FILES.items():
+            path = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(path) or root, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        git = ["git", "-C", root, "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        subprocess.run(["git", "init", "-q", root], check=True)
+        subprocess.run(git + ["add", "-A"], check=True)
+        subprocess.run(git + ["commit", "-qm", "fixture: as discussed"], check=True)
+        cfg_path = os.path.join(os.path.dirname(root), os.path.basename(root) + "-selftest.json")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(SELFTEST_CONFIG, f)
+        found = scan_tree(root, load_config(cfg_path), commits="HEAD")
+        shutil.rmtree(os.path.join(root, ".git"))           # the same tree, not in git
+        plain = scan_tree(root, load_config(cfg_path))
+        os.remove(cfg_path)
+    failures = []
+    if sorted(x for x in plain) != sorted(x for x in found if not x.startswith("commit ")):
+        failures.append("PLAIN TREE  differs from the git-tracked scan")
+    for rel, rule in SELFTEST_EXPECT.items():
+        if not any(x.startswith(f"{rel}:") and f": {rule}:" in x for x in found):
+            failures.append(f"NOT CAUGHT  {rel} ({rule})")
+    for rel in SELFTEST_FILES:
+        if rel not in SELFTEST_EXPECT and any(x.startswith(f"{rel}:") for x in found):
+            failures.append(f"FALSE HIT   {rel}")
+    if not any(x.startswith("commit ") and ": narrative:" in x for x in found):
+        failures.append("NOT CAUGHT  commit message (narrative)")
+    for line in failures:
+        print(line)
+    print(f"self-test: {'FAIL' if failures else 'OK'} ({len(SELFTEST_EXPECT) + 1} must-catch, "
+          f"{len(SELFTEST_FILES) - len(SELFTEST_EXPECT)} must-pass)")
+    return 1 if failures else 0
+
+
+def main(argv):
+    args = argv[1:]
+    if args == ["--self-test"]:
+        return self_test()
+    cfg_path, commits, root = None, None, "."
+    while args:
+        a = args.pop(0)
+        if a == "--config" and args:
+            cfg_path = args.pop(0)
+        elif a == "--commits" and args:
+            commits = args.pop(0)
+        elif not a.startswith("-"):
+            root = a
+        else:
+            print("usage: public-hygiene [--config FILE] [--commits RANGE] [PATH] | --self-test",
+                  file=sys.stderr)
+            return 2
+    if not os.path.isdir(root):
+        print(f"public-hygiene: {root} is not a directory", file=sys.stderr)
+        return 2
+    top = subprocess.run(["git", "-C", root, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if commits and top.returncode:
+        print(f"public-hygiene: --commits needs {root} to be in a git repository", file=sys.stderr)
+        return 2
+    base = top.stdout.strip() if top.returncode == 0 else root
+    cfg_path = cfg_path or os.path.join(base, ".public-hygiene.json")
+    try:
+        cfg = load_config(cfg_path)
+    except (OSError, ValueError, re.error) as e:
+        print(f"public-hygiene: {e}", file=sys.stderr)
+        return 2
+    findings = scan_tree(root, cfg, commits)
+    for line in findings:
+        print(line)
+    print(f"public-hygiene: {len(findings)} finding(s)", file=sys.stderr)
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
