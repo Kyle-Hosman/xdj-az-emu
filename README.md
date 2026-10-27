@@ -5,6 +5,8 @@ A developer emulator for the **XDJ-AZ** running
 on your computer, with the same AZ-MODS core a real deck runs, so you can build and
 test Community Mods without a deck on your desk.
 
+<p align="center"><img src="docs/images/az-emu.png" width="900" alt="AZ-EMU: the emulated XDJ-AZ with two decks playing"></p>
+
 xdj-az-emu is built on [cdj3k-emu](https://github.com/nsaintot/cdj3k-emu), nsaintot's CDJ-3000
 emulator: the virtual machine, the boot path and the panel drawing all started there. See
 [ATTRIBUTION.md](ATTRIBUTION.md) for what was kept and changed.
