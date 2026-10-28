@@ -100,7 +100,13 @@ seconds, milliseconds (u16); `bf ff ff` when no track is loaded.
 ## Audio levels
 
 The deck program writes its audio as one 10-channel stream, the D810's inputs: channels
-0/1 are deck 1, 2/3 deck 2, 4/5 deck 3, 6/7 deck 4 (8/9 stayed silent in every test).
+0/1 are deck 1, 2/3 deck 2, 4/5 deck 3, 6/7 deck 4. Channels 8/9 (zero-based indexing)
+feed the LINK CUE headphone monitoring path, as verified on physical XDJ-AZ hardware
+running firmware 2.01 with AZ-MODS 1.2.5. A 1 kHz test tone injected into channels
+8/9 of EP147's existing ALSA output stream was audible in headphones with LINK CUE
+enabled and inaudible with LINK CUE disabled. The test tone was not present on the
+MASTER, BOOTH or REC outputs during testing. These findings establish the observed
+routing of channels 8/9 under the tested conditions.
 Each pair is the deck's output before the mixer: trim, EQ, the faders, the crossfader
 and the master level are applied after it, by the DSP, so the stream holds no master
 mix (measured: playing one deck alone moves only its pair; that deck's channel
